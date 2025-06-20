@@ -32,7 +32,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     async function checkAuth() {
         const token = localStorage.getItem('access_token');
         if (!token) {
-            window.location.href = '/login.html';
+            window.location.href = '/login';
             return null;
         }
 
@@ -46,7 +46,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (!response.ok) {
                 if (response.status === 401) {
                     localStorage.removeItem('access_token');
-                    window.location.href = '/login.html';
+                    window.location.href = '/login';
                     return null;
                 }
                 throw new Error('Failed to get user info');
@@ -75,7 +75,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                 </span>
             </span>
             <button id="logout-btn" class="btn-secondary text-sm">Logout</button>
-            ${currentUser.is_admin ? '<a href="/admin.html" class="btn-secondary text-sm">Admin Panel</a>' : ''}
+            ${currentUser.is_admin ? '<a href="/admin" class="btn-secondary text-sm">Admin Panel</a>' : ''}
         `;
 
         // Insert after the app title
@@ -106,7 +106,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                     localStorage.removeItem('access_token');
                     localStorage.removeItem('refresh_token');
                     localStorage.removeItem('user_info');
-                    window.location.href = '/login.html';
+                    window.location.href = '/login';
                 }
             });
         }
@@ -119,7 +119,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     async function makeAuthenticatedRequest(url, options = {}) {
         const token = localStorage.getItem('access_token');
         if (!token) {
-            window.location.href = '/login.html';
+            window.location.href = '/login';
             return null;
         }
 
@@ -164,7 +164,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             localStorage.removeItem('access_token');
             localStorage.removeItem('refresh_token');
             localStorage.removeItem('user_info');
-            window.location.href = '/login.html';
+            window.location.href = '/login';
             return null;
         }
 
@@ -1164,7 +1164,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         // Get the authentication token
         const token = localStorage.getItem('access_token');
         if (!token) {
-            window.location.href = '/login.html';
+            window.location.href = '/login';
             return;
         }
 
@@ -1179,7 +1179,7 @@ document.addEventListener('DOMContentLoaded', async function () {
 
             if (response.status === 401) {
                 localStorage.removeItem('access_token');
-                window.location.href = '/login.html';
+                window.location.href = '/login';
                 return;
             }
             const result = await response.json();

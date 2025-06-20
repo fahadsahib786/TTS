@@ -436,7 +436,7 @@
         function checkAuth() {
             const token = localStorage.getItem('access_token');
             if (!token) {
-                window.location.href = '/login.html';
+                window.location.href = '/login';
                 return;
             }
             return token;
@@ -459,7 +459,7 @@
             
             if (response.status === 401) {
                 localStorage.removeItem('access_token');
-                window.location.href = '/login.html';
+                window.location.href = '/login';
                 return;
             }
             
@@ -678,7 +678,7 @@
                 console.error('Error logging out:', error);
             } finally {
                 localStorage.removeItem('access_token');
-                window.location.href = '/login.html';
+                window.location.href = '/login';
             }
         });
 
