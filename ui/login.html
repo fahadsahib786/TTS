@@ -238,6 +238,11 @@
                 localStorage.setItem('access_token', data.access_token);
                 localStorage.setItem('refresh_token', data.refresh_token);
                 
+// ALSO set a cookie so that the browser will send it on full-page navigations:
+document.cookie = `access_token=${data.access_token}; Path=/; SameSite=Lax`;
+document.cookie = `refresh_token=${data.refresh_token}; Path=/; SameSite=Lax`;
+
+
                 // Store user info for quick access
                 if (data.user) {
                     localStorage.setItem('user_info', JSON.stringify(data.user));

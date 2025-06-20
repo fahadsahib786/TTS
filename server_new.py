@@ -17,6 +17,7 @@ from typing import Optional, List, Dict, Any, Literal
 import webbrowser
 import threading
 import uvicorn
+from fastapi import Request
 
 
 from fastapi import (
@@ -150,6 +151,18 @@ app = FastAPI(
     version="2.0.2",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def inject_auth_header_from_cookie(request: Request, call_next):
+    # if no Authorization header but we have an access_token cookie…
+    if "authorization" not in request.headers and "access_token" in request.cookies:
+        token = request.cookies["access_token"]
+        # append an Authorization: Bearer <token> header for HTTPBearer to see
+        request.scope["headers"].append(
+            (b"authorization", f"Bearer {token}".encode())
+        )
+    return await call_next(request)
 
 # CORS Middleware
 app.add_middleware(
