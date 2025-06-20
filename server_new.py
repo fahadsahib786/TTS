@@ -931,7 +931,7 @@ if __name__ == "__main__":
     logger.info(f"Web UI will be available at http://{server_host}:{server_port}/")
     
     uvicorn.run(
-        "server:app",
+        "server_new:app",     # <-- note module name matches this file
         host=server_host,
         port=server_port,
         log_level="info",

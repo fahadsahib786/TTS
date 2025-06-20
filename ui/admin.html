@@ -491,6 +491,7 @@
             });
         });
 
+
         // Users management
         async function loadUsers() {
             const loading = document.getElementById('users-loading');
@@ -567,7 +568,10 @@
             const form = document.getElementById('user-form');
             const formData = new FormData(form);
             const userData = Object.fromEntries(formData.entries());
-            
+                    // when editing, don’t overwrite with a blank password
+        if (currentUserId && !userData.password) {
+            delete userData.password;
+        }
             try {
                 if (currentUserId) {
                     await apiRequest(`/users/${currentUserId}`, {
@@ -618,8 +622,10 @@
         // Configuration management
         async function loadConfig() {
             try {
-                const config = await apiRequest('/config');
-                const form = document.getElementById('config-form');
+            // fetch the full UI config payload
+            const { config: fullConfig } = await apiRequest('/ui/initial-data');
+            const config = fullConfig; // use the top-level config object
+            const form = document.getElementById('config-form');
                 form.innerHTML = '';
                 
                 Object.entries(config).forEach(([key, value]) => {
@@ -659,7 +665,7 @@
             const config = Object.fromEntries(formData.entries());
             
             try {
-                await apiRequest('/config', {
+ await apiRequest('/save_settings', {
                     method: 'POST',
                     body: JSON.stringify(config)
                 });
@@ -686,6 +692,9 @@
         document.addEventListener('DOMContentLoaded', () => {
             checkAuth();
             loadUsers();
+            document.getElementById('add-user-btn')
+  .addEventListener('click', () => openUserModal());
+
         });
     </script>
 </body>
