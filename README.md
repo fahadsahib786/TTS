@@ -711,4 +711,4 @@ You can find it here: [https://opensource.org/licenses/MIT](https://opensource.o
     *   [SoundFile](https://python-soundfile.readthedocs.io/) & [libsndfile](http://www.mega-nerd.com/libsndfile/)
     *   [Jinja2](https://jinja.palletsprojects.com/)
     *   [WaveSurfer.js](https://wavesurfer.xyz/)
-    *   [Tailwind CSS](https://tailwindcss.com/) (via CDN)
+    *   [Tailwind CSS](https://tailwindcss.com/) (via CDN)# TTS
