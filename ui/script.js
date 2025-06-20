@@ -1,6 +1,6 @@
 // ui/script.js
-// Client-side JavaScript for the Chatterbox TTS Server web interface.
-// Handles UI interactions, API communication, audio playback, and settings management.
+// Client-side JavaScript for the VoiceAI TTS Server web interface.
+// Handles UI interactions, API communication, audio playback, authentication, and settings management.
 
 document.addEventListener('DOMContentLoaded', async function () {
     // --- Global Flags & State ---
@@ -16,17 +16,160 @@ document.addEventListener('DOMContentLoaded', async function () {
     let appPresets = [];
     let initialReferenceFiles = [];
     let initialPredefinedVoices = [];
+    let currentUser = null;
 
     let hideChunkWarning = false;
     let hideGenerationWarning = false;
     let currentVoiceMode = 'predefined';
 
     const IS_LOCAL_FILE = window.location.protocol === 'file:';
-    // If you always access the server via localhost
     const API_BASE_URL = IS_LOCAL_FILE ? 'http://localhost:8004' : '';
 
     const DEBOUNCE_DELAY_MS = 750;
+    const MAX_CHARACTERS_PER_REQUEST = 50000; // 50k character limit
 
+    // --- Authentication Functions ---
+    async function checkAuth() {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            window.location.href = '/login.html';
+            return null;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/users/me`, {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (!response.ok) {
+                if (response.status === 401) {
+                    localStorage.removeItem('access_token');
+                    window.location.href = '/login.html';
+                    return null;
+                }
+                throw new Error('Failed to get user info');
+            }
+
+            currentUser = await response.json();
+            updateUserInfo();
+            return currentUser;
+        } catch (error) {
+            console.error('Auth check failed:', error);
+            return null;
+        }
+    }
+
+    function updateUserInfo() {
+        if (!currentUser) return;
+
+        // Add user info to the header
+        const userInfoDiv = document.createElement('div');
+        userInfoDiv.className = 'user-info flex items-center space-x-4 px-4 py-2 bg-slate-50 dark:bg-slate-800 rounded-lg';
+        userInfoDiv.innerHTML = `
+            <span class="text-sm">
+                <span class="font-medium">${currentUser.username}</span>
+                <span class="text-slate-500 dark:text-slate-400">
+                    (${formatNumber(currentUser.chars_used_current_month)} / ${formatNumber(currentUser.monthly_char_limit)} chars)
+                </span>
+            </span>
+            <button id="logout-btn" class="btn-secondary text-sm">Logout</button>
+            ${currentUser.is_admin ? '<a href="/admin.html" class="btn-secondary text-sm">Admin Panel</a>' : ''}
+        `;
+
+        // Insert after the app title
+        const header = appTitleLink ? appTitleLink.parentElement : document.querySelector('header');
+        if (header) {
+            header.appendChild(userInfoDiv);
+        }
+
+        // Add logout handler
+        const logoutBtn = document.getElementById('logout-btn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', async () => {
+                try {
+                    const token = localStorage.getItem('access_token');
+                    if (token) {
+                        await fetch(`${API_BASE_URL}/api/auth/logout`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                            }
+                        });
+                    }
+                } catch (error) {
+                    console.error('Logout error:', error);
+                } finally {
+                    // Clear all stored data
+                    localStorage.removeItem('access_token');
+                    localStorage.removeItem('refresh_token');
+                    localStorage.removeItem('user_info');
+                    window.location.href = '/login.html';
+                }
+            });
+        }
+    }
+
+    function formatNumber(num) {
+        return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    }
+
+    async function makeAuthenticatedRequest(url, options = {}) {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            window.location.href = '/login.html';
+            return null;
+        }
+
+        const authOptions = {
+            ...options,
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        };
+
+        const response = await fetch(url, authOptions);
+        
+        if (response.status === 401) {
+            // Try to refresh token first
+            const refreshToken = localStorage.getItem('refresh_token');
+            if (refreshToken) {
+                try {
+                    const refreshResponse = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+                        method: 'POST',
+                        headers: {
+                            'X-Refresh-Token': refreshToken,
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    
+                    if (refreshResponse.ok) {
+                        const refreshData = await refreshResponse.json();
+                        localStorage.setItem('access_token', refreshData.access_token);
+                        
+                        // Retry the original request with new token
+                        authOptions.headers['Authorization'] = `Bearer ${refreshData.access_token}`;
+                        return await fetch(url, authOptions);
+                    }
+                } catch (error) {
+                    console.error('Token refresh failed:', error);
+                }
+            }
+            
+            // If refresh fails or no refresh token, redirect to login
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            localStorage.removeItem('user_info');
+            window.location.href = '/login.html';
+            return null;
+        }
+
+        return response;
+    }
 
     // --- DOM Element Selectors ---
     const appTitleLink = document.getElementById('app-title-link');
@@ -38,6 +181,26 @@ document.addEventListener('DOMContentLoaded', async function () {
     const textArea = document.getElementById('text');
     const charCount = document.getElementById('char-count');
     const generateBtn = document.getElementById('generate-btn');
+    
+    // Create and insert text input loader
+    const textInputLoader = document.createElement('div');
+    textInputLoader.id = 'text-input-loader';
+    textInputLoader.className = 'hidden absolute top-2 right-2 z-10';
+    textInputLoader.innerHTML = `
+        <div class="flex items-center space-x-2 bg-white dark:bg-slate-800 px-3 py-1 rounded-lg shadow-lg border border-slate-200 dark:border-slate-600">
+            <svg class="animate-spin h-4 w-4 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="text-sm text-slate-600 dark:text-slate-300">Generating...</span>
+        </div>
+    `;
+    
+    // Insert the loader after the textarea
+    if (textArea && textArea.parentElement) {
+        textArea.parentElement.style.position = 'relative';
+        textArea.parentElement.appendChild(textInputLoader);
+    }
     const splitTextToggle = document.getElementById('split-text-toggle');
     const chunkSizeControls = document.getElementById('chunk-size-controls');
     const chunkSizeSlider = document.getElementById('chunk-size-slider');
@@ -203,11 +366,11 @@ document.addEventListener('DOMContentLoaded', async function () {
             theme: localStorage.getItem('uiTheme') || 'dark'
         };
         try {
-            const response = await fetch(`${API_BASE_URL}/save_settings`, {
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/save_settings`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ui_state: stateToSave })
             });
+            if (!response) return;
             if (!response.ok) {
                 const errorResult = await response.json();
                 throw new Error(errorResult.detail || `Failed to save UI state (status ${response.status})`);
@@ -265,8 +428,17 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     async function fetchInitialData() {
+        // Check authentication first
+        const user = await checkAuth();
+        if (!user) {
+            return; // Will redirect to login
+        }
+
         try {
-            const response = await fetch(`${API_BASE_URL}/api/ui/initial-data`);
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/api/ui/initial-data`);
+            if (!response) {
+                return; // Authentication failed, will redirect
+            }
             if (!response.ok) {
                 const errorText = await response.text();
                 throw new Error(`Failed to fetch initial UI data: ${response.status} ${response.statusText}. Server response: ${errorText}`);
@@ -603,6 +775,24 @@ document.addEventListener('DOMContentLoaded', async function () {
         setTimeout(() => audioPlayerContainer.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 150);
     }
 
+    // Async version that returns a promise when WaveSurfer is ready
+    function initializeWaveSurferAsync(audioUrl, resultDetails = {}) {
+        return new Promise((resolve, reject) => {
+            initializeWaveSurfer(audioUrl, resultDetails);
+            
+            if (wavesurfer) {
+                wavesurfer.on('ready', () => {
+                    resolve();
+                });
+                wavesurfer.on('error', (err) => {
+                    reject(err);
+                });
+            } else {
+                reject(new Error('Failed to create WaveSurfer instance'));
+            }
+        });
+    }
+
     // --- TTS Generation Logic ---
     function getTTSFormData() {
         const jsonData = {
@@ -629,28 +819,49 @@ document.addEventListener('DOMContentLoaded', async function () {
     async function submitTTSRequest() {
         isGenerating = true;
         showLoadingOverlay();
+        showTextInputLoader();
         const startTime = performance.now();
         const jsonData = getTTSFormData();
+
+        // Check character limit
+        const textLength = jsonData.text.length;
+        if (currentUser && textLength > currentUser.monthly_char_limit - currentUser.chars_used_current_month) {
+            hideLoadingOverlay();
+            hideTextInputLoader();
+            isGenerating = false;
+            showNotification("Monthly character limit exceeded", "error");
+            return;
+        }
+
         try {
-            const response = await fetch(`${API_BASE_URL}/tts`, {
+            const response = await makeAuthenticatedRequest(`${API_BASE_URL}/tts`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(jsonData)
             });
+
+            if (!response) {
+                throw new Error('Authentication failed');
+            }
             if (!response.ok) {
                 const errorResult = await response.json().catch(() => ({ detail: `HTTP error ${response.status}` }));
                 throw new Error(errorResult.detail || 'TTS generation failed.');
             }
+            
             const audioBlob = await response.blob();
             const endTime = performance.now();
             const genTime = ((endTime - startTime) / 1000).toFixed(2);
             const filenameFromServer = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'generated_audio.wav';
             const resultDetails = {
-                outputUrl: URL.createObjectURL(audioBlob), filename: filenameFromServer, genTime: genTime,
-                submittedVoiceMode: jsonData.voice_mode, submittedPredefinedVoice: jsonData.predefined_voice_id,
+                outputUrl: URL.createObjectURL(audioBlob), 
+                filename: filenameFromServer, 
+                genTime: genTime,
+                submittedVoiceMode: jsonData.voice_mode, 
+                submittedPredefinedVoice: jsonData.predefined_voice_id,
                 submittedCloneFile: jsonData.reference_audio_filename
             };
-            initializeWaveSurfer(resultDetails.outputUrl, resultDetails);
+            
+            // Initialize WaveSurfer and wait for it to be ready
+            await initializeWaveSurferAsync(resultDetails.outputUrl, resultDetails);
             showNotification('Audio generated successfully!', 'success');
         } catch (error) {
             console.error('TTS Generation Error:', error);
@@ -658,6 +869,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         } finally {
             isGenerating = false;
             hideLoadingOverlay();
+            hideTextInputLoader();
         }
     }
 
@@ -759,8 +971,26 @@ document.addEventListener('DOMContentLoaded', async function () {
         hideGenerationWarningModal(); debouncedSaveState(); proceedWithSubmissionChecks();
     });
     if (loadingCancelBtn) loadingCancelBtn.addEventListener('click', () => {
-        if (isGenerating) { isGenerating = false; hideLoadingOverlay(); showNotification("Generation UI cancelled by user.", "info"); }
+        if (isGenerating) { 
+            isGenerating = false; 
+            hideLoadingOverlay(); 
+            hideTextInputLoader();
+            showNotification("Generation cancelled by user.", "info"); 
+        }
     });
+
+    // Text input loader functions
+    function showTextInputLoader() {
+        if (textInputLoader) {
+            textInputLoader.classList.remove('hidden');
+        }
+    }
+
+    function hideTextInputLoader() {
+        if (textInputLoader) {
+            textInputLoader.classList.add('hidden');
+        }
+    }
     function showLoadingOverlay() {
         if (loadingOverlay && generateBtn && loadingCancelBtn) {
             loadingMessage.textContent = 'Generating audio...';
@@ -832,11 +1062,11 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (Object.keys(configDataToSave).length === 0) { showNotification("No editable configuration values to save.", "info"); return; }
             updateConfigStatus(saveConfigBtn, configStatus, 'Saving configuration...', 'info', 0, false);
             try {
-                const response = await fetch(`${API_BASE_URL}/save_settings`, {
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/save_settings`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(configDataToSave)
                 });
+                if (!response) return;
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.detail || 'Failed to save configuration');
                 updateConfigStatus(saveConfigBtn, configStatus, result.message || 'Configuration saved.', 'success', 5000);
@@ -859,11 +1089,11 @@ document.addEventListener('DOMContentLoaded', async function () {
             };
             updateConfigStatus(saveGenDefaultsBtn, genDefaultsStatus, 'Saving generation defaults...', 'info', 0, false);
             try {
-                const response = await fetch(`${API_BASE_URL}/save_settings`, {
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/save_settings`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ generation_defaults: genParams })
                 });
+                if (!response) return;
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.detail || 'Failed to save generation defaults');
                 updateConfigStatus(saveGenDefaultsBtn, genDefaultsStatus, result.message || 'Generation defaults saved.', 'success', 5000);
@@ -880,9 +1110,10 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (!confirm("Are you sure you want to reset ALL settings to their initial defaults? This will affect config.yaml and UI preferences. This action cannot be undone.")) return;
             updateConfigStatus(resetSettingsBtn, configStatus, 'Resetting settings...', 'info', 0, false);
             try {
-                const response = await fetch(`${API_BASE_URL}/reset_settings`, {
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/reset_settings`, {
                     method: 'POST'
                 });
+                if (!response) return;
                 if (!response.ok) {
                     const errorResult = await response.json().catch(() => ({ detail: 'Failed to reset settings on server.' }));
                     throw new Error(errorResult.detail);
@@ -903,9 +1134,10 @@ document.addEventListener('DOMContentLoaded', async function () {
             if (!confirm("Are you sure you want to restart the server?")) return;
             updateConfigStatus(restartServerBtn, configStatus, 'Attempting server restart...', 'processing', 0, false);
             try {
-                const response = await fetch(`${API_BASE_URL}/restart_server`, {
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/restart_server`, {
                     method: 'POST'
                 });
+                if (!response) return;
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.detail || 'Server responded with error on restart command');
                 showNotification("Server restart initiated. Please wait a moment for the server to come back online, then refresh the page.", "info", 10000);
@@ -928,11 +1160,28 @@ document.addEventListener('DOMContentLoaded', async function () {
         const uploadNotification = showNotification(`Uploading ${files.length} file(s)...`, 'info', 0);
         const formData = new FormData();
         for (const file of files) formData.append('files', file);
+
+        // Get the authentication token
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+            window.location.href = '/login.html';
+            return;
+        }
+
         try {
             const response = await fetch(`${API_BASE_URL}${endpoint}`, {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
                 body: formData
             });
+
+            if (response.status === 401) {
+                localStorage.removeItem('access_token');
+                window.location.href = '/login.html';
+                return;
+            }
             const result = await response.json();
             if (uploadNotification) uploadNotification.remove();
             if (!response.ok) throw new Error(result.message || result.detail || `Upload failed with status ${response.status}`);
@@ -990,7 +1239,8 @@ document.addEventListener('DOMContentLoaded', async function () {
             cloneRefreshButton.innerHTML = `<svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
             cloneRefreshButton.disabled = true;
             try {
-                const response = await fetch(`${API_BASE_URL}/get_reference_files`);
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/get_reference_files`);
+                if (!response) return;
                 if (!response.ok) throw new Error('Failed to fetch reference files list');
                 const files = await response.json();
                 initialReferenceFiles = files;
@@ -1013,7 +1263,8 @@ document.addEventListener('DOMContentLoaded', async function () {
             predefinedVoiceRefreshButton.innerHTML = `<svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`;
             predefinedVoiceRefreshButton.disabled = true;
             try {
-                const response = await fetch(`${API_BASE_URL}/get_predefined_voices`);
+                const response = await makeAuthenticatedRequest(`${API_BASE_URL}/get_predefined_voices`);
+                if (!response) return;
                 if (!response.ok) throw new Error('Failed to fetch predefined voices list');
                 const voices = await response.json();
                 initialPredefinedVoices = voices;

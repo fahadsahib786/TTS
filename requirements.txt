@@ -8,11 +8,17 @@
 # Use PyTorch's official CPU-only package index for torch components
 --extra-index-url https://download.pytorch.org/whl/cpu
 
-# --- Deep Learning Framework (CPU-Only) ---
+# --- Deep Learning Framework (GPU Support) ---
 # Updated to match chatterbox-tts requirement for torch==2.6.0
-torch==2.6.0                    # PyTorch deep learning framework (CPU)
-torchvision==0.21.0             # Computer vision utilities for PyTorch
-torchaudio==2.6.0               # Audio processing utilities for PyTorch
+torch==2.6.0+cu118              # PyTorch deep learning framework with CUDA
+torchvision==0.21.0+cu118       # Computer vision utilities for PyTorch
+torchaudio==2.6.0+cu118         # Audio processing utilities for PyTorch
+nvidia-cuda-runtime-cu11        # NVIDIA CUDA Runtime
+nvidia-cuda-nvrtc-cu11         # NVIDIA CUDA NVRTC
+nvidia-cuda-cupti-cu11         # NVIDIA CUDA Profiling Tools Interface
+nvidia-cudnn-cu11              # NVIDIA cuDNN library
+nvidia-cublas-cu11             # NVIDIA cuBLAS library
+nvidia-cufft-cu11              # NVIDIA cuFFT library
 
 # --- Core TTS Application ---
 # Chatterbox TTS engine - installed directly from GitHub

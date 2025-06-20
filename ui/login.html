@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - VoiceAI</title>
+    <link href="styles.css" rel="stylesheet">
+    <style>
+        .login-container {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            background-color: #f8fafc;
+        }
+        
+        .dark .login-container {
+            background-color: #0f172a;
+        }
+        
+        .login-card {
+            width: 100%;
+            max-width: 400px;
+            background-color: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        
+        .dark .login-card {
+            background-color: #1e293b;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+        }
+        
+        .login-header {
+            padding: 1.5rem;
+            text-align: center;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .dark .login-header {
+            border-color: #334155;
+        }
+        
+        .login-logo {
+            font-size: 1.875rem;
+            font-weight: 700;
+            color: #1e293b;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .dark .login-logo {
+            color: #f8fafc;
+        }
+        
+        .login-form {
+            padding: 1.5rem;
+        }
+        
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #475569;
+            margin-bottom: 0.5rem;
+        }
+        
+        .dark .form-label {
+            color: #94a3b8;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 0.625rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 0.375rem;
+            background-color: white;
+            color: #0f172a;
+            font-size: 0.875rem;
+        }
+        
+        .dark .form-input {
+            background-color: #1e293b;
+            border-color: #475569;
+            color: #f8fafc;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: #6366f1;
+            ring: 2px solid #6366f1;
+        }
+        
+        .login-btn {
+            width: 100%;
+            padding: 0.625rem;
+            background-color: #6366f1;
+            color: white;
+            border: none;
+            border-radius: 0.375rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .login-btn:hover {
+            background-color: #4f46e5;
+        }
+        
+        .login-btn:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+        }
+        
+        .error-message {
+            color: #ef4444;
+            font-size: 0.875rem;
+            margin-top: 0.5rem;
+        }
+        
+        .dark .error-message {
+            color: #f87171;
+        }
+        
+        .theme-toggle {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            color: #475569;
+        }
+        
+        .dark .theme-toggle {
+            color: #94a3b8;
+        }
+    </style>
+</head>
+<body class="antialiased">
+    <button id="theme-toggle-btn" class="theme-toggle" type="button" aria-label="Toggle theme">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z" />
+        </svg>
+    </button>
+    
+    <div class="login-container">
+        <div class="login-card">
+            <div class="login-header">
+                <a href="/" class="login-logo">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 5.42a1 1 0 01-.285 1.05A3.989 3.989 0 0115 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.715-5.349L11 6.477V16h2a1 1 0 110 2H7a1 1 0 110-2h2V6.477L6.237 7.582l1.715 5.349a1 1 0 01-.285 1.05A3.989 3.989 0 015 15a3.989 3.989 0 01-2.667-1.019 1 1 0 01-.285-1.05l1.738-5.42-1.233-.616a1 1 0 01.894-1.79l1.599.8L9 4.323V3a1 1 0 011-1z" clip-rule="evenodd" />
+                    </svg>
+                    VoiceAI
+                </a>
+            </div>
+            
+            <form id="login-form" class="login-form">
+                <div class="form-group">
+                    <label for="email" class="form-label">Email</label>
+                    <input type="email" id="email" name="email" class="form-input" required autocomplete="email">
+                </div>
+                
+                <div class="form-group">
+                    <label for="password" class="form-label">Password</label>
+                    <input type="password" id="password" name="password" class="form-input" required autocomplete="current-password">
+                </div>
+                
+                <div id="error-message" class="error-message hidden"></div>
+                
+                <button type="submit" id="login-btn" class="login-btn">
+                    Sign in
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Theme handling
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const savedTheme = localStorage.getItem('uiTheme');
+        const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
+        
+        function applyTheme(theme) {
+            document.documentElement.classList.toggle('dark', theme === 'dark');
+            localStorage.setItem('uiTheme', theme);
+        }
+        
+        applyTheme(initialTheme);
+        
+        document.getElementById('theme-toggle-btn').addEventListener('click', () => {
+            const newTheme = document.documentElement.classList.contains('dark') ? 'light' : 'dark';
+            applyTheme(newTheme);
+        });
+        
+        // Login handling
+        const loginForm = document.getElementById('login-form');
+        const loginBtn = document.getElementById('login-btn');
+        const errorMessage = document.getElementById('error-message');
+        
+        loginForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            loginBtn.disabled = true;
+            errorMessage.classList.add('hidden');
+            
+            try {
+                const IS_LOCAL_FILE = window.location.protocol === 'file:';
+                const API_BASE_URL = IS_LOCAL_FILE ? 'http://localhost:8004' : '';
+                
+                const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Login failed');
+                }
+                
+                // Store tokens and user data
+                localStorage.setItem('access_token', data.access_token);
+                localStorage.setItem('refresh_token', data.refresh_token);
+                
+                // Store user info for quick access
+                if (data.user) {
+                    localStorage.setItem('user_info', JSON.stringify(data.user));
+                }
+                
+                // Add loading state
+                loginBtn.innerHTML = `
+                    <svg class="animate-spin h-5 w-5 mr-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Signing in...
+                `;
+                
+                // Redirect to main page
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 500);
+                
+            } catch (error) {
+                errorMessage.textContent = error.message;
+                errorMessage.classList.remove('hidden');
+                loginBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
