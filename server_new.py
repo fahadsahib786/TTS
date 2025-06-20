@@ -16,6 +16,8 @@ from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, Literal
 import webbrowser
 import threading
+import uvicorn
+
 
 from fastapi import (
     FastAPI, HTTPException, Request, File, UploadFile, Form, BackgroundTasks,
