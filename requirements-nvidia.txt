@@ -42,7 +42,7 @@ hf_transfer                     # Speed up file transfers
 bcrypt                         # Secure password hashing
 python-jose[cryptography]      # JWT token handling
 slowapi                       # Rate limiting for FastAPI
-python-email-validator         # Email validation
+email-validator        # Email validation
 sqlalchemy                    # Database ORM
 pydantic[email]               # Data validation with email support
 
