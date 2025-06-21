@@ -342,34 +342,29 @@ async def get_script():
 async def get_web_ui(request: Request, db: Session = Depends(get_db)):
     """Serves the main web interface (index.html)."""
     logger.info("[MainUI] Request received for main UI page ('/').")
-    logger.debug(f"[MainUI] Request URL: {request.url}")
-    logger.debug(f"[MainUI] Request cookies: {dict(request.cookies)}")
     
     try:
-        # Use the auth dependency to handle authentication
-        # This will automatically handle token validation, refresh, etc.
-        try:
-            current_user = await auth_handler.get_current_user(request, db)
-            # Get user data that we want to pass to the template
-            user_data = {
-                "id": current_user.id,
-                "username": current_user.username,
-                "email": current_user.email,
-                "is_admin": current_user.is_admin,
-                "is_active": current_user.is_active
-            }
-            logger.info(f"[MainUI] User {user_data['username']} authenticated successfully, serving main UI")
-            return templates.TemplateResponse("index.html", {
-                "request": request,
-                "user": user_data
-            })
-        except HTTPException as auth_exc:
-            if auth_exc.status_code == 401:
-                logger.info("[MainUI] Authentication failed, redirecting to login")
-                return RedirectResponse(url="/login", status_code=303)
-            else:
-                raise auth_exc
-            
+        current_user = await auth_handler.get_current_user(request, db)
+        user_data = {
+            "id": current_user.id,
+            "username": current_user.username,
+            "email": current_user.email,
+            "is_admin": current_user.is_admin,
+            "is_active": current_user.is_active
+        }
+        logger.info(f"[MainUI] User {user_data['username']} authenticated successfully, serving main UI")
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "user": user_data
+        })
+    except HTTPException as auth_exc:
+        if auth_exc.status_code == 401:
+            # Clear any invalid cookies
+            response = RedirectResponse(url="/login", status_code=303)
+            response.delete_cookie("access_token", path="/")
+            response.delete_cookie("refresh_token", path="/")
+            return response
+        raise auth_exc
     except Exception as e_render:
         logger.error(f"[MainUI] Error rendering main UI page: {e_render}", exc_info=True)
         return HTMLResponse(
@@ -381,24 +376,8 @@ async def get_web_ui(request: Request, db: Session = Depends(get_db)):
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
 async def get_login_page(request: Request):
     """Serves the login page."""
-    # If user is already logged in, redirect to main page
-    token = request.cookies.get("access_token")
-    if token:
-        try:
-            payload = auth_handler.decode_token(token)
-            user_id = payload.get("sub")
-            if user_id:
-                # Verify user still exists and is active
-                db = next(get_db())
-                user = db.query(User).filter(User.id == user_id).first()
-                if user and user.is_active and not user.is_expired():
-                    logger.info("User already authenticated, redirecting to main page")
-                    return RedirectResponse(url="/", status_code=303)
-        except Exception as e:
-            logger.debug(f"Token validation failed during login page access: {e}")
-            # Don't clear cookies here, just serve login page
-            pass
-    
+    # Always serve the login page - let the frontend handle redirects
+    # This prevents redirect loops
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
