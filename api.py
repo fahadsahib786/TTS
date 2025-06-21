@@ -6,7 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, EmailStr
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -368,7 +368,7 @@ async def get_system_stats(
     total_characters = db.query(func.sum(UsageLog.characters_used)).scalar() or 0
     
     # Get active users today
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     active_users_today = db.query(func.count(func.distinct(UsageLog.user_id))).filter(
         func.date(UsageLog.created_at) == today
     ).scalar() or 0
@@ -419,7 +419,7 @@ async def get_user_usage_summary(
     total_chars = db.query(func.sum(UsageLog.characters_used)).filter(UsageLog.user_id == user_id).scalar() or 0
     
     # Get current month usage
-    start_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     current_month_chars = db.query(func.sum(UsageLog.characters_used)).filter(
         UsageLog.user_id == user_id,
         UsageLog.created_at >= start_of_month

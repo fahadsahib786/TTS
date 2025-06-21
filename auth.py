@@ -1,7 +1,7 @@
 """
 Authentication and authorization system for VoiceAI TTS Server
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from fastapi import Depends, HTTPException, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -38,7 +38,7 @@ class AuthHandler:
         # Ensure 'sub' is a string as required by JWT standard
         if 'sub' in to_encode:
             to_encode['sub'] = str(to_encode['sub'])
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         to_encode.update({"exp": expire})
         return jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
 
@@ -48,7 +48,7 @@ class AuthHandler:
         # Ensure 'sub' is a string as required by JWT standard
         if 'sub' in to_encode:
             to_encode['sub'] = str(to_encode['sub'])
-        expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         to_encode.update({"exp": expire})
         return jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
 
@@ -124,7 +124,7 @@ class AuthHandler:
             if session:
                 # Valid session found, update last used time
                 if not session.is_expired():
-                    session.last_used = datetime.utcnow()
+                    session.last_used = datetime.now(timezone.utc)
                     if request:
                         session.ip_address = request.client.host
                         session.user_agent = request.headers.get("user-agent")
@@ -136,7 +136,7 @@ class AuthHandler:
                         user_id=user_id,
                         session_token=token,
                         refresh_token=None,  # No refresh token for auto-renewed session
-                        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+                        expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
                         ip_address=request.client.host if request else None,
                         user_agent=request.headers.get("user-agent") if request else None
                     )
@@ -149,7 +149,7 @@ class AuthHandler:
                 user_id=user_id,
                 session_token=token,
                 refresh_token=None,  # No refresh token for auto-renewed session
-                expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+                expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
                 ip_address=request.client.host if request else None,
                 user_agent=request.headers.get("user-agent") if request else None
             )
@@ -209,7 +209,7 @@ async def create_user_session(
     logger.info(f"[Session] Refresh token created: {refresh_token[:20]}...")
     
     # Create session record
-    session_expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    session_expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     logger.info(f"[Session] Session will expire at: {session_expires_at}")
     
     session = UserSession(
@@ -326,7 +326,7 @@ async def refresh_access_token(
         
         # Update session
         session.session_token = new_access_token
-        session.last_used = datetime.utcnow()
+        session.last_used = datetime.now(timezone.utc)
         if request:
             session.ip_address = request.client.host
             session.user_agent = request.headers.get("user-agent")

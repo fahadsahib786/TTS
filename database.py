@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.sql import func
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
 import os
@@ -74,14 +74,14 @@ class User(Base):
     
     def reset_monthly_usage(self):
         """Reset monthly usage if a new month has started"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if self.last_reset_date.month != now.month or self.last_reset_date.year != now.year:
             self.chars_used_current_month = 0
             self.last_reset_date = now
     
     def reset_daily_usage(self):
         """Reset daily usage if a new day has started"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if self.last_daily_reset.date() != now.date():
             self.chars_used_today = 0
             self.last_daily_reset = now
@@ -147,7 +147,7 @@ class User(Base):
         """Check if user account has expired"""
         if self.expires_at is None:
             return False
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
 
 class UsageLog(Base):
     __tablename__ = "usage_logs"
@@ -185,7 +185,7 @@ class UserSession(Base):
     
     def is_expired(self) -> bool:
         """Check if session has expired"""
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(timezone.utc) > self.expires_at
     
     @staticmethod
     def generate_tokens():
@@ -223,7 +223,7 @@ class LoginAttempt(Base):
     def is_ip_blocked(ip_address: str, db_session) -> bool:
         """Check if IP is blocked due to too many failed attempts"""
         # Block if more than 5 failed attempts in last 15 minutes
-        cutoff_time = datetime.utcnow() - timedelta(minutes=15)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=15)
         failed_attempts = db_session.query(LoginAttempt).filter(
             LoginAttempt.ip_address == ip_address,
             LoginAttempt.success == False,
@@ -235,7 +235,7 @@ class LoginAttempt(Base):
     def is_email_blocked(email: str, db_session) -> bool:
         """Check if email is blocked due to too many failed attempts"""
         # Block if more than 10 failed attempts in last 30 minutes
-        cutoff_time = datetime.utcnow() - timedelta(minutes=30)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(minutes=30)
         failed_attempts = db_session.query(LoginAttempt).filter(
             LoginAttempt.email == email,
             LoginAttempt.success == False,

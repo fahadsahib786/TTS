@@ -14,6 +14,7 @@ import librosa
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, Literal
+from datetime import datetime, timezone
 import webbrowser
 import threading
 import uvicorn
@@ -197,11 +198,14 @@ async def inject_auth_header_from_cookie(request: Request, call_next):
                     logger.info(f"[Middleware] Attempting token refresh...")
                     try:
                         db = next(get_db())
-                        refresh_result = await refresh_access_token(
-                            request.cookies["refresh_token"],
-                            db,
-                            request
-                        )
+                        try:
+                            refresh_result = await refresh_access_token(
+                                request.cookies["refresh_token"],
+                                db,
+                                request
+                            )
+                        finally:
+                            db.close()
                         logger.info(f"[Middleware] Token refresh successful, updating Authorization header")
                         # Update the Authorization header with new token
                         headers = list(request.scope["headers"])
@@ -429,7 +433,7 @@ async def get_web_ui(request: Request):
                 if not session.is_expired():
                     # Valid session found, update last used time
                     logger.info(f"[MainUI] Session is valid, updating last used time")
-                    session.last_used = datetime.utcnow()
+                    session.last_used = datetime.now(timezone.utc)
                     session.ip_address = request.client.host
                     session.user_agent = request.headers.get("user-agent")
                     db.commit()
