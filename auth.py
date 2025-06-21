@@ -103,10 +103,13 @@ class AuthHandler:
             if user_id is None:
                 raise HTTPException(status_code=401, detail="Invalid authentication token")
             
-            # Get user
+            # Get user and refresh the session to ensure it's attached
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 raise HTTPException(status_code=401, detail="User not found")
+            
+            # Refresh the user object in the session
+            db.refresh(user)
             
             if not user.is_active:
                 raise HTTPException(status_code=403, detail="User account is disabled")
