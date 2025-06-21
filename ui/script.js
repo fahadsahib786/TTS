@@ -50,32 +50,24 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
 
         try {
-            const response = await fetch(`${API_BASE_URL}/api/users/me`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    credentials: 'include'
-                }
-            });
+            const response = await makeAuthenticatedRequest(
+              `${API_BASE_URL}/api/users/me`
+            );
 
-            if (!response.ok) {
-                if (response.status === 401) {
-                    console.log('Authentication failed, attempting token refresh');
-                    // Try to refresh token before redirecting
-                    const refreshSuccess = await attemptTokenRefresh();
-                    if (!refreshSuccess) {
-                        clearAuthData();
-                        window.location.href = '/login';
-                        return null;
-                    }
-                    // Retry with new token
-                    return await checkAuth();
-                }
-                throw new Error('Failed to get user info');
-            }
+        if (!response) {
+          // makeAuthenticatedRequest already redirected on 401
+          return null;
+        }
+        if (!response.ok) {
+          console.error(`Failed to fetch /api/users/me: ${response.status}`);
+          clearAuthData();
+          window.location.href = '/login';
+          return null;
+        }
 
-            currentUser = await response.json();
-            updateUserInfo();
-            return currentUser;
+        currentUser = await response.json();
+        updateUserInfo();
+        return currentUser;
         } catch (error) {
             console.error('Auth check failed:', error);
             clearAuthData();
