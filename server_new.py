@@ -287,18 +287,41 @@ async def get_web_ui(request: Request):
             logger.info("No authentication token found, redirecting to login")
             return RedirectResponse(url="/login", status_code=303)
         
-        # Validate token and get user
         try:
+            # Validate token and get user
             payload = auth_handler.decode_token(token)
             user_id = payload.get("sub")
             if not user_id:
-                raise HTTPException(status_code=401, detail="Invalid token")
+                logger.debug("Invalid token format, redirecting to login")
+                return RedirectResponse(url="/login", status_code=303)
             
             # Get database session and user
             db = next(get_db())
             user = db.query(User).filter(User.id == user_id).first()
-            if not user or not user.is_active or user.is_expired():
-                raise HTTPException(status_code=401, detail="User not found or inactive")
+            
+            if not user:
+                logger.debug("User not found, redirecting to login")
+                return RedirectResponse(url="/login", status_code=303)
+            
+            if not user.is_active:
+                logger.debug("User account disabled")
+                return templates.TemplateResponse(
+                    "login.html",
+                    {
+                        "request": request,
+                        "error_message": "Your account has been disabled. Please contact an administrator."
+                    }
+                )
+            
+            if user.is_expired():
+                logger.debug("User account expired")
+                return templates.TemplateResponse(
+                    "login.html",
+                    {
+                        "request": request,
+                        "error_message": "Your account has expired. Please contact an administrator to renew."
+                    }
+                )
             
             # User is authenticated, serve the main UI
             return templates.TemplateResponse("index.html", {
@@ -307,7 +330,7 @@ async def get_web_ui(request: Request):
             })
             
         except Exception as auth_error:
-            logger.info(f"Authentication failed: {auth_error}, redirecting to login")
+            logger.debug(f"Authentication validation failed: {auth_error}")
             return RedirectResponse(url="/login", status_code=303)
             
     except Exception as e_render:
@@ -335,12 +358,9 @@ async def get_login_page(request: Request):
                     logger.info("User already authenticated, redirecting to main page")
                     return RedirectResponse(url="/", status_code=303)
         except Exception as e:
-            logger.info(f"Token validation failed during login page access: {e}")
-            # Clear invalid cookie
-            response = templates.TemplateResponse("login.html", {"request": request})
-            response.delete_cookie("access_token")
-            response.delete_cookie("refresh_token")
-            return response
+            logger.debug(f"Token validation failed during login page access: {e}")
+            # Don't clear cookies here, just serve login page
+            pass
     
     return templates.TemplateResponse("login.html", {"request": request})
 

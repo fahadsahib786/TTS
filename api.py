@@ -109,17 +109,21 @@ async def login(
     
     user = db.query(User).filter(User.email == user_data.email).first()
     
-    if not user or not user.check_password(user_data.password):
+    if not user:
         db.commit()  # Save the failed attempt
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="No account found with this email address")
+    
+    if not user.check_password(user_data.password):
+        db.commit()  # Save the failed attempt
+        raise HTTPException(status_code=401, detail="Incorrect password")
     
     if not user.is_active:
         db.commit()  # Save the failed attempt
-        raise HTTPException(status_code=403, detail="Account is disabled")
+        raise HTTPException(status_code=403, detail="This account has been disabled. Please contact an administrator.")
     
     if user.is_expired():
         db.commit()  # Save the failed attempt
-        raise HTTPException(status_code=403, detail="Account has expired")
+        raise HTTPException(status_code=403, detail="This account has expired. Please contact an administrator to renew.")
     
     # Update login attempt as successful
     login_attempt.success = True
@@ -142,6 +146,7 @@ async def refresh_token(
 
 @router.post("/auth/logout")
 async def logout(
+    request: Request,
     response: Response,
     all_sessions: bool = False,
     current_user: User = Depends(auth_handler.get_current_user),
@@ -159,14 +164,16 @@ async def logout(
         httponly=True,
         secure=is_secure,
         samesite="lax",
-        path="/"
+        path="/",
+        domain=None  # Let browser determine domain
     )
     response.delete_cookie(
         key="refresh_token",
         httponly=True,
         secure=is_secure,
         samesite="lax",
-        path="/"
+        path="/",
+        domain=None  # Let browser determine domain
     )
     
     return {"message": "Successfully logged out"}

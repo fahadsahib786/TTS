@@ -86,8 +86,31 @@ class User(Base):
             self.chars_used_today = 0
             self.last_daily_reset = now
     
-    def can_use_characters(self, char_count: int) -> tuple[bool, str]:
+    def can_use_characters(self, char_count: int) -> bool:
         """Check if user can use the specified number of characters"""
+        if self.is_admin:
+            return True
+        
+        # Check per-request limit
+        if char_count > self.per_request_char_limit:
+            return False
+        
+        # Reset counters if needed
+        self.reset_monthly_usage()
+        self.reset_daily_usage()
+        
+        # Check monthly limit
+        if (self.chars_used_current_month + char_count) > self.monthly_char_limit:
+            return False
+        
+        # Check daily limit
+        if (self.chars_used_today + char_count) > self.daily_char_limit:
+            return False
+        
+        return True
+    
+    def get_character_usage_info(self, char_count: int) -> tuple[bool, str]:
+        """Get detailed character usage information"""
         if self.is_admin:
             return True, "Admin user - unlimited access"
         
@@ -114,8 +137,7 @@ class User(Base):
         if self.is_admin:
             return True
             
-        can_use, _ = self.can_use_characters(char_count)
-        if can_use:
+        if self.can_use_characters(char_count):
             self.chars_used_current_month += char_count
             self.chars_used_today += char_count
             return True

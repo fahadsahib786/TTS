@@ -63,12 +63,13 @@ class AuthHandler:
     ) -> User:
         """Get current authenticated user from token"""
         try:
+            # First try to validate as a session token
             payload = self.decode_token(credentials.credentials)
             user_id: int = payload.get("sub")
             if user_id is None:
                 raise HTTPException(status_code=401, detail="Invalid authentication token")
             
-            # Get user and validate session
+            # Get user
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
                 raise HTTPException(status_code=401, detail="User not found")
@@ -79,7 +80,7 @@ class AuthHandler:
             if user.is_expired():
                 raise HTTPException(status_code=403, detail="User account has expired")
             
-            # Validate session
+            # Check if this is a valid session token
             session = (
                 db.query(UserSession)
                 .filter(
@@ -90,16 +91,40 @@ class AuthHandler:
                 .first()
             )
             
-            if not session or session.is_expired():
-                raise HTTPException(status_code=401, detail="Session has expired")
+            if session:
+                # Valid session found, update last used time
+                if not session.is_expired():
+                    session.last_used = datetime.utcnow()
+                    if request:
+                        session.ip_address = request.client.host
+                        session.user_agent = request.headers.get("user-agent")
+                    db.commit()
+                    return user
+                else:
+                    # Session expired but token still valid, create new session
+                    new_session = UserSession(
+                        user_id=user_id,
+                        session_token=credentials.credentials,
+                        refresh_token=None,  # No refresh token for auto-renewed session
+                        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+                        ip_address=request.client.host if request else None,
+                        user_agent=request.headers.get("user-agent") if request else None
+                    )
+                    db.add(new_session)
+                    db.commit()
+                    return user
             
-            # Update session last used time
-            session.last_used = datetime.utcnow()
-            if request:
-                session.ip_address = request.client.host
-                session.user_agent = request.headers.get("user-agent")
+            # No valid session found but token is valid, create new session
+            new_session = UserSession(
+                user_id=user_id,
+                session_token=credentials.credentials,
+                refresh_token=None,  # No refresh token for auto-renewed session
+                expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+                ip_address=request.client.host if request else None,
+                user_agent=request.headers.get("user-agent") if request else None
+            )
+            db.add(new_session)
             db.commit()
-            
             return user
             
         except JWTError:
