@@ -2079,7 +2079,105 @@ input[type="range"].slider-base::-moz-range-thumb {
     transform: translate(var(--tw-translate-x), var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y));
 }
 
-/* --- 8. Responsive Design --- */
+/* --- 8. Text Input Loader Styling --- */
+
+#text-input-loader {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 20;
+    transition: opacity 0.3s ease-in-out;
+}
+
+#text-input-loader .loader-content {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    backdrop-filter: blur(4px);
+}
+
+#text-input-loader .loader-spinner {
+    width: 1rem;
+    height: 1rem;
+    color: #4f46e5;
+    animation: spin 1s linear infinite;
+}
+
+#text-input-loader .loader-text {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #374151;
+    white-space: nowrap;
+}
+
+/* Dark mode styles for text input loader */
+.dark #text-input-loader .loader-content {
+    background-color: #1e293b;
+    border-color: #475569;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2), 0 2px 4px -1px rgba(0, 0, 0, 0.1);
+}
+
+.dark #text-input-loader .loader-spinner {
+    color: #6366f1;
+}
+
+.dark #text-input-loader .loader-text {
+    color: #e2e8f0;
+}
+
+/* Disabled state styling for textarea and button */
+.textarea-base:disabled,
+.input-base:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background-color: #f1f5f9;
+    color: #64748b;
+}
+
+.dark .textarea-base:disabled,
+.dark .input-base:disabled {
+    background-color: #0f172a;
+    color: #475569;
+}
+
+/* Enhanced button disabled state */
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.btn-primary:disabled:hover {
+    background-color: #4f46e5;
+    transform: none;
+    box-shadow: none;
+}
+
+/* --- 9. Responsive Design --- */
+
+@media (min-width: 640px) {
+=======
+
+@media (min-width: 640px) {
+=======
+.dark .btn-primary:disabled:hover {
+    background-color: #6366f1;
+}
+
+/* --- 9. Responsive Design --- */
+
+@media (min-width: 640px) {
+=======
+/* --- 9. Responsive Design --- */
+
+@media (min-width: 640px) {
+=======
 
 @media (min-width: 640px) {
     .sm\:px-6 {
@@ -2314,4 +2412,99 @@ input[type="range"].slider-base::-moz-range-thumb {
     /* hover:bg-slate-700 */
     border-color: #64748b;
     /* hover:border-slate-500 */
+}
+
+/* --- 10. Text Input Loader Enhanced Styling --- */
+
+#text-input-loader {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    z-index: 30;
+    transition: opacity 0.3s ease-in-out, transform 0.2s ease-in-out;
+    transform: scale(1);
+}
+
+#text-input-loader.show {
+    opacity: 1;
+    transform: scale(1);
+}
+
+#text-input-loader.hide {
+    opacity: 0;
+    transform: scale(0.95);
+}
+
+#text-input-loader .loader-content {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background-color: rgba(255, 255, 255, 0.95);
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.15), 0 2px 6px -1px rgba(0, 0, 0, 0.1);
+    backdrop-filter: blur(8px);
+    min-width: 120px;
+    justify-content: center;
+}
+
+#text-input-loader .loader-spinner {
+    width: 1rem;
+    height: 1rem;
+    color: #4f46e5;
+    animation: spin 1s linear infinite;
+    flex-shrink: 0;
+}
+
+#text-input-loader .loader-text {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #374151;
+    white-space: nowrap;
+}
+
+/* Dark mode styles for enhanced text input loader */
+.dark #text-input-loader .loader-content {
+    background-color: rgba(30, 41, 59, 0.95);
+    border-color: #475569;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.3), 0 2px 6px -1px rgba(0, 0, 0, 0.2);
+}
+
+.dark #text-input-loader .loader-spinner {
+    color: #6366f1;
+}
+
+.dark #text-input-loader .loader-text {
+    color: #e2e8f0;
+}
+
+/* Enhanced disabled state for textarea when loader is active */
+.textarea-base.generating {
+    opacity: 0.7;
+    cursor: not-allowed;
+    background-color: #f8fafc;
+    color: #64748b;
+    pointer-events: none;
+}
+
+.dark .textarea-base.generating {
+    background-color: rgba(15, 23, 42, 0.8);
+    color: #64748b;
+}
+
+/* Pulse animation for loader visibility */
+@keyframes loaderPulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.8;
+        transform: scale(1.02);
+    }
+}
+
+#text-input-loader.pulse .loader-content {
+    animation: loaderPulse 2s ease-in-out infinite;
 }

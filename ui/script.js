@@ -228,17 +228,17 @@ document.addEventListener('DOMContentLoaded', async function () {
     const charCount = document.getElementById('char-count');
     const generateBtn = document.getElementById('generate-btn');
     
-    // Create and insert text input loader
+    // Create and insert enhanced text input loader
     const textInputLoader = document.createElement('div');
     textInputLoader.id = 'text-input-loader';
-    textInputLoader.className = 'hidden absolute top-2 right-2 z-10';
+    textInputLoader.className = 'hidden';
     textInputLoader.innerHTML = `
-        <div class="flex items-center space-x-2 bg-white dark:bg-slate-800 px-3 py-1 rounded-lg shadow-lg border border-slate-200 dark:border-slate-600">
-            <svg class="animate-spin h-4 w-4 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <div class="loader-content">
+            <svg class="loader-spinner animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
-            <span class="text-sm text-slate-600 dark:text-slate-300">Generating...</span>
+            <span class="loader-text">Generating...</span>
         </div>
     `;
     
@@ -866,6 +866,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         isGenerating = true;
         showLoadingOverlay();
         showTextInputLoader();
+        updateTextInputLoaderText('Preparing text...');
         const startTime = performance.now();
         const jsonData = getTTSFormData();
 
@@ -914,6 +915,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
 
         try {
+            updateTextInputLoaderText('Sending request...');
             const response = await makeAuthenticatedRequest(`${API_BASE_URL}/tts`, {
                 method: 'POST',
                 body: JSON.stringify(jsonData)
@@ -927,6 +929,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                 throw new Error(errorResult.detail || 'TTS generation failed.');
             }
             
+            updateTextInputLoaderText('Processing audio...');
             const audioBlob = await response.blob();
             const endTime = performance.now();
             const genTime = ((endTime - startTime) / 1000).toFixed(2);
@@ -941,6 +944,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             };
             
             // Initialize WaveSurfer and wait for it to be ready
+            updateTextInputLoaderText('Loading audio player...');
             await initializeWaveSurferAsync(resultDetails.outputUrl, resultDetails);
             
             // Update user info to reflect new usage
@@ -1067,16 +1071,51 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     });
 
-    // Text input loader functions
+    // Enhanced text input loader functions
     function showTextInputLoader() {
-        if (textInputLoader) {
-            textInputLoader.classList.remove('hidden');
+        if (textInputLoader && textArea) {
+            // Add generating class to textarea for visual feedback
+            textArea.classList.add('generating');
+            textArea.disabled = true;
+            
+            // Show loader with animation
+            textInputLoader.classList.remove('hidden', 'hide');
+            textInputLoader.classList.add('show');
+            
+            // Add pulse animation for better visibility
+            setTimeout(() => {
+                if (textInputLoader.classList.contains('show')) {
+                    textInputLoader.classList.add('pulse');
+                }
+            }, 100);
         }
     }
 
     function hideTextInputLoader() {
+        if (textInputLoader && textArea) {
+            // Remove generating class from textarea
+            textArea.classList.remove('generating');
+            textArea.disabled = false;
+            
+            // Hide loader with animation
+            textInputLoader.classList.remove('show', 'pulse');
+            textInputLoader.classList.add('hide');
+            
+            // Completely hide after animation
+            setTimeout(() => {
+                textInputLoader.classList.add('hidden');
+                textInputLoader.classList.remove('hide');
+            }, 300);
+        }
+    }
+
+    // Update loader text dynamically
+    function updateTextInputLoaderText(text) {
         if (textInputLoader) {
-            textInputLoader.classList.add('hidden');
+            const loaderText = textInputLoader.querySelector('.loader-text');
+            if (loaderText) {
+                loaderText.textContent = text;
+            }
         }
     }
     function showLoadingOverlay() {
