@@ -165,13 +165,44 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 @app.middleware("http")
 async def inject_auth_header_from_cookie(request: Request, call_next):
-    # if no Authorization header but we have an access_token cookie…
-    if "authorization" not in request.headers and "access_token" in request.cookies:
-        token = request.cookies["access_token"]
-        # Create a mutable copy of headers
-        headers = list(request.scope["headers"])
-        headers.append((b"authorization", f"Bearer {token}".encode()))
-        request.scope["headers"] = headers
+    """Middleware to handle authentication from cookies or headers"""
+    try:
+        # Check for existing Authorization header
+        auth_header = request.headers.get("authorization")
+        
+        # If no Authorization header but we have an access_token cookie
+        if not auth_header and "access_token" in request.cookies:
+            token = request.cookies["access_token"]
+            # Create a mutable copy of headers
+            headers = list(request.scope["headers"])
+            headers.append((b"authorization", f"Bearer {token}".encode()))
+            request.scope["headers"] = headers
+            
+            # Try to validate token
+            try:
+                auth_handler.decode_token(token)
+            except Exception as e:
+                logger.debug(f"Cookie token validation failed: {e}")
+                # If token is invalid and we have a refresh token, try to refresh
+                if "refresh_token" in request.cookies:
+                    try:
+                        db = next(get_db())
+                        refresh_result = await refresh_access_token(
+                            request.cookies["refresh_token"],
+                            db,
+                            request
+                        )
+                        # Update the Authorization header with new token
+                        headers = list(request.scope["headers"])
+                        headers = [h for h in headers if h[0] != b"authorization"]
+                        headers.append((b"authorization", f"Bearer {refresh_result['access_token']}".encode()))
+                        request.scope["headers"] = headers
+                    except Exception as refresh_error:
+                        logger.debug(f"Token refresh failed: {refresh_error}")
+                        # Let the request continue - the auth handler will redirect if needed
+    except Exception as e:
+        logger.error(f"Auth middleware error: {e}")
+        
     return await call_next(request)
 
 # CORS Middleware
@@ -199,7 +230,8 @@ async def add_security_headers(request: Request, call_next):
 async def auth_exception_handler(request: Request, exc: FastAPIHTTPException):
     """Handle authentication exceptions by redirecting to login page for HTML requests"""
     if exc.status_code == 401:
-        # Check if this is a browser request (HTML) vs API request (JSON)
+        # Clear invalid auth cookies
+        response = None
         accept_header = request.headers.get("accept", "")
         user_agent = request.headers.get("user-agent", "")
         
@@ -213,13 +245,26 @@ async def auth_exception_handler(request: Request, exc: FastAPIHTTPException):
         
         if is_browser_request:
             # Redirect to login page for browser requests
-            return RedirectResponse(url="/login", status_code=303)
+            response = RedirectResponse(url="/login", status_code=303)
         else:
             # Return JSON error for API requests
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=exc.status_code,
                 content={"detail": exc.detail}
             )
+        
+        # Clear invalid cookies
+        if "access_token" in request.cookies or "refresh_token" in request.cookies:
+            response.delete_cookie("access_token", path="/")
+            response.delete_cookie("refresh_token", path="/")
+            
+            # Also try with domain
+            domain = request.url.hostname
+            if domain:
+                response.delete_cookie("access_token", path="/", domain=domain)
+                response.delete_cookie("refresh_token", path="/", domain=domain)
+        
+        return response
     
     # For other HTTP exceptions, return the default response
     return JSONResponse(
@@ -274,63 +319,37 @@ async def get_web_ui(request: Request):
     """Serves the main web interface (index.html)."""
     logger.info("Request received for main UI page ('/').")
     
-    # Check authentication manually to handle redirects properly
     try:
-        # Try to get token from cookie first, then from Authorization header
-        token = request.cookies.get("access_token")
-        if not token:
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
+        # Use the auth handler to get the current user
+        # This will automatically handle token validation and user checks
+        current_user = await auth_handler.get_current_user(
+            credentials=None,  # Will be handled by middleware
+            db=next(get_db()),
+            request=request
+        )
         
-        if not token:
-            logger.info("No authentication token found, redirecting to login")
-            return RedirectResponse(url="/login", status_code=303)
+        # If we get here, user is authenticated and valid
+        logger.info(f"User {current_user.username} authenticated successfully")
+        return templates.TemplateResponse("index.html", {
+            "request": request,
+            "user": current_user
+        })
         
-        try:
-            # Validate token and get user
-            payload = auth_handler.decode_token(token)
-            user_id = payload.get("sub")
-            if not user_id:
-                logger.debug("Invalid token format, redirecting to login")
-                return RedirectResponse(url="/login", status_code=303)
-            
-            # Get database session and user
-            db = next(get_db())
-            user = db.query(User).filter(User.id == user_id).first()
-            
-            if not user:
-                logger.debug("User not found, redirecting to login")
-                return RedirectResponse(url="/login", status_code=303)
-            
-            if not user.is_active:
-                logger.debug("User account disabled")
-                return templates.TemplateResponse(
-                    "login.html",
-                    {
-                        "request": request,
-                        "error_message": "Your account has been disabled. Please contact an administrator."
-                    }
-                )
-            
-            if user.is_expired():
-                logger.debug("User account expired")
-                return templates.TemplateResponse(
-                    "login.html",
-                    {
-                        "request": request,
-                        "error_message": "Your account has expired. Please contact an administrator to renew."
-                    }
-                )
-            
-            # User is authenticated, serve the main UI
-            return templates.TemplateResponse("index.html", {
-                "request": request,
-                "user": user
-            })
-            
-        except Exception as auth_error:
-            logger.debug(f"Authentication validation failed: {auth_error}")
+    except HTTPException as auth_error:
+        logger.info(f"Authentication failed: {auth_error.detail}")
+        
+        # Handle specific error cases
+        if auth_error.status_code == 403:
+            # User account issues (disabled/expired)
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error_message": auth_error.detail
+                }
+            )
+        else:
+            # General authentication failure - redirect to login
             return RedirectResponse(url="/login", status_code=303)
             
     except Exception as e_render:

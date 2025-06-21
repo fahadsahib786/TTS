@@ -284,8 +284,10 @@
         
         // Set cookies with proper security attributes for server-side authentication
         const isSecure = window.location.protocol === 'https:';
-        document.cookie = `access_token=${data.access_token};Path=/;SameSite=Lax${isSecure ? ';Secure' : ''}`;
-        document.cookie = `refresh_token=${data.refresh_token};Path=/;SameSite=Lax${isSecure ? ';Secure' : ''}`;
+        // Set cookies with proper attributes
+        const domain = window.location.hostname;
+        document.cookie = `access_token=${data.access_token};Path=/;Domain=${domain};SameSite=Lax${isSecure ? ';Secure' : ''}`;
+        document.cookie = `refresh_token=${data.refresh_token};Path=/;Domain=${domain};SameSite=Lax${isSecure ? ';Secure' : ''}`;
 
         console.log('[Login] Redirecting to main UI…');
         // Small delay to ensure cookies are set before redirect

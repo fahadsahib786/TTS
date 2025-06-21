@@ -63,8 +63,18 @@ class AuthHandler:
     ) -> User:
         """Get current authenticated user from token"""
         try:
+            # Handle case where credentials might be None (from middleware)
+            if credentials is None:
+                # Try to get token from request headers (set by middleware)
+                auth_header = request.headers.get("authorization", "") if request else ""
+                if not auth_header.startswith("Bearer "):
+                    raise HTTPException(status_code=401, detail="No authentication token provided")
+                token = auth_header[7:]
+            else:
+                token = credentials.credentials
+            
             # First try to validate as a session token
-            payload = self.decode_token(credentials.credentials)
+            payload = self.decode_token(token)
             user_id: int = payload.get("sub")
             if user_id is None:
                 raise HTTPException(status_code=401, detail="Invalid authentication token")
@@ -85,7 +95,7 @@ class AuthHandler:
                 db.query(UserSession)
                 .filter(
                     UserSession.user_id == user_id,
-                    UserSession.session_token == credentials.credentials,
+                    UserSession.session_token == token,
                     UserSession.is_active == True
                 )
                 .first()
@@ -104,7 +114,7 @@ class AuthHandler:
                     # Session expired but token still valid, create new session
                     new_session = UserSession(
                         user_id=user_id,
-                        session_token=credentials.credentials,
+                        session_token=token,
                         refresh_token=None,  # No refresh token for auto-renewed session
                         expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
                         ip_address=request.client.host if request else None,
@@ -117,7 +127,7 @@ class AuthHandler:
             # No valid session found but token is valid, create new session
             new_session = UserSession(
                 user_id=user_id,
-                session_token=credentials.credentials,
+                session_token=token,
                 refresh_token=None,  # No refresh token for auto-renewed session
                 expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
                 ip_address=request.client.host if request else None,
