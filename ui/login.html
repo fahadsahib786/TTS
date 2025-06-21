@@ -292,36 +292,19 @@
         console.log('[Login] Refresh token received:', data.refresh_token ? `${data.refresh_token.substring(0, 20)}...` : 'NONE');
         console.log('[Login] User info:', data.user);
         
-        // Store in localStorage
+        // Store in localStorage for client-side access
         localStorage.setItem('access_token',  data.access_token);
         localStorage.setItem('refresh_token', data.refresh_token);
         localStorage.setItem('user_info', JSON.stringify(data.user));
         console.log('[Login] Tokens stored in localStorage');
         
-        // Set cookies with proper security attributes for server-side authentication
-        const isSecure = window.location.protocol === 'https:';
-        console.log('[Login] Setting cookies:');
-        console.log('[Login] Is secure:', isSecure);
-        
-        const accessCookie = `access_token=${data.access_token};Path=/;SameSite=Lax${isSecure ? ';Secure' : ''}`;
-        const refreshCookie = `refresh_token=${data.refresh_token};Path=/;SameSite=Lax${isSecure ? ';Secure' : ''}`;
-        
-        console.log('[Login] Access cookie string:', accessCookie);
-        console.log('[Login] Refresh cookie string:', refreshCookie);
-        
-        document.cookie = accessCookie;
-        document.cookie = refreshCookie;
-        
-        // Verify cookies were set
-        console.log('[Login] All cookies after setting:', document.cookie);
-        console.log('[Login] Access token cookie check:', document.cookie.includes('access_token'));
-        console.log('[Login] Refresh token cookie check:', document.cookie.includes('refresh_token'));
+        // Note: Server will set HTTP-only cookies automatically
+        // Do not set cookies manually via JavaScript to avoid conflicts
+        console.log('[Login] Server has set HTTP-only cookies for authentication');
 
-        console.log('[Login] Redirecting to main UI in 100ms...');
-        // Small delay to ensure cookies are set before redirect
-        setTimeout(() => {
-          window.location.href = '/';
-        }, 100);
+        console.log('[Login] Redirecting to main UI...');
+        // Redirect immediately since server has already set cookies
+        window.location.href = '/';
       }
       catch (err) {
         console.error('[Login] Network/fetch error occurred:');

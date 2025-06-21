@@ -107,9 +107,8 @@ document.addEventListener('DOMContentLoaded', async function () {
             const data = await response.json();
             localStorage.setItem('access_token', data.access_token);
             
-            // Update cookie as well
-            const isSecure = window.location.protocol === 'https:';
-            document.cookie = `access_token=${data.access_token};Path=/;SameSite=Lax${isSecure ? ';Secure' : ''}`;
+            // Note: Server will set HTTP-only cookies automatically
+            // Do not set cookies manually via JavaScript to avoid conflicts
             
             console.log('Token refreshed successfully');
             return true;
@@ -123,8 +122,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
         localStorage.removeItem('user_info');
-        document.cookie = 'access_token=;Path=/;expires=Thu, 01 Jan 1970 00:00:01 GMT';
-        document.cookie = 'refresh_token=;Path=/;expires=Thu, 01 Jan 1970 00:00:01 GMT';
+        // Note: HTTP-only cookies will be cleared by the server's logout endpoint
     }
 
     function updateUserInfo() {

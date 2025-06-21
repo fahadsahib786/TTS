@@ -173,6 +173,7 @@ async def login(
 @limiter.limit("10/minute")
 async def refresh_token(
     request: Request = None,
+    response: Response = None,
     db: Session = Depends(get_db)
 ):
     """Refresh access token using refresh token"""
@@ -180,7 +181,25 @@ async def refresh_token(
     if not refresh_token:
         raise HTTPException(status_code=400, detail="Refresh token is required")
     
-    return await refresh_access_token(refresh_token, db, request)
+    result = await refresh_access_token(refresh_token, db, request)
+    
+    # Set HTTP-only cookie for the new access token
+    if response:
+        is_secure = request.url.scheme == "https" if request else False
+        access_cookie_max_age = 300 * 60  # ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        
+        response.set_cookie(
+            key="access_token",
+            value=result["access_token"],
+            max_age=access_cookie_max_age,
+            httponly=True,
+            secure=is_secure,
+            samesite="lax",
+            path="/",
+            domain=None
+        )
+    
+    return result
 
 @router.post("/auth/logout")
 async def logout(
