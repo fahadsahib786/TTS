@@ -97,8 +97,7 @@ def create_users():
                 is_active=True,
                 monthly_char_limit=10000,   # 10k monthly
                 daily_char_limit=2000,      # 2k daily
-                per_request_char_limit=1000, # 1k per request
-                is_active=True
+                per_request_char_limit=1000  # 1k per request
             )
             db.add(user)
             users_created.append({
@@ -122,8 +121,7 @@ def create_users():
                 is_active=True,
                 monthly_char_limit=20000000,  # 20M monthly
                 daily_char_limit=500000,      # 500k daily
-                per_request_char_limit=30000,  # 30k per request
-                is_active=True
+                per_request_char_limit=30000  # 30k per request
             )
             db.add(user)
             users_created.append({
