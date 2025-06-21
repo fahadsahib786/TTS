@@ -81,11 +81,22 @@ async def login(
     db: Session = Depends(get_db)
 ):
     """Login user and create session with brute force protection"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     ip_address = request.client.host
     user_agent = request.headers.get("user-agent")
+    
+    logger.info(f"[Login] Login attempt received:")
+    logger.info(f"[Login] Email: {user_data.email}")
+    logger.info(f"[Login] IP Address: {ip_address}")
+    logger.info(f"[Login] User Agent: {user_agent}")
+    logger.info(f"[Login] Password provided: {'Yes' if user_data.password else 'No'}")
+    logger.info(f"[Login] Password length: {len(user_data.password) if user_data.password else 0}")
 
     # Check for IP-based blocking
     if LoginAttempt.is_ip_blocked(ip_address, db):
+        logger.warning(f"[Login] IP {ip_address} is blocked due to too many failed attempts")
         raise HTTPException(
             status_code=429,
             detail="Too many failed attempts. Please try again later."
@@ -93,6 +104,7 @@ async def login(
 
     # Check for email-based blocking
     if LoginAttempt.is_email_blocked(user_data.email, db):
+        logger.warning(f"[Login] Email {user_data.email} is blocked due to too many failed attempts")
         raise HTTPException(
             status_code=429,
             detail="Too many failed attempts for this email. Please try again later."
@@ -106,30 +118,56 @@ async def login(
         success=False
     )
     db.add(login_attempt)
+    logger.info(f"[Login] Created login attempt record for {user_data.email}")
     
+    # Look up user
+    logger.info(f"[Login] Looking up user with email: {user_data.email}")
     user = db.query(User).filter(User.email == user_data.email).first()
     
     if not user:
+        logger.warning(f"[Login] No user found with email: {user_data.email}")
         db.commit()  # Save the failed attempt
         raise HTTPException(status_code=401, detail="No account found with this email address")
     
-    if not user.check_password(user_data.password):
+    logger.info(f"[Login] User found: ID={user.id}, Username={user.username}, Active={user.is_active}")
+    
+    # Check password
+    logger.info(f"[Login] Checking password for user {user.username}")
+    password_valid = user.check_password(user_data.password)
+    logger.info(f"[Login] Password validation result: {password_valid}")
+    
+    if not password_valid:
+        logger.warning(f"[Login] Invalid password for user {user.username}")
         db.commit()  # Save the failed attempt
         raise HTTPException(status_code=401, detail="Incorrect password")
     
     if not user.is_active:
+        logger.warning(f"[Login] User {user.username} account is disabled")
         db.commit()  # Save the failed attempt
         raise HTTPException(status_code=403, detail="This account has been disabled. Please contact an administrator.")
     
     if user.is_expired():
+        logger.warning(f"[Login] User {user.username} account is expired")
         db.commit()  # Save the failed attempt
         raise HTTPException(status_code=403, detail="This account has expired. Please contact an administrator to renew.")
     
     # Update login attempt as successful
     login_attempt.success = True
     db.commit()
+    logger.info(f"[Login] Login successful for user {user.username}, creating session...")
     
-    return await create_user_session(user, db, request, response)
+    # Create user session
+    try:
+        session_result = await create_user_session(user, db, request, response)
+        logger.info(f"[Login] Session created successfully for user {user.username}")
+        logger.info(f"[Login] Access token created: {session_result['access_token'][:20] if session_result.get('access_token') else 'NONE'}...")
+        logger.info(f"[Login] Refresh token created: {session_result['refresh_token'][:20] if session_result.get('refresh_token') else 'NONE'}...")
+        logger.info(f"[Login] Token type: {session_result.get('token_type')}")
+        logger.info(f"[Login] Expires in: {session_result.get('expires_in')} seconds")
+        return session_result
+    except Exception as e:
+        logger.error(f"[Login] Error creating session for user {user.username}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to create user session")
 
 @router.post("/auth/refresh")
 @limiter.limit("10/minute")

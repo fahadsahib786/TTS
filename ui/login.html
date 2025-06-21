@@ -254,16 +254,26 @@
         email:    emailInput.value.trim(),
         password: passInput.value
       };
-      console.log('[Login] Sending payload →', payload);
+      console.log('[Login] Sending login request with credentials:');
+      console.log('[Login] Email:', payload.email);
+      console.log('[Login] Password length:', payload.password.length);
+      console.log('[Login] Full payload:', payload);
 
       try {
+        console.log('[Login] Making fetch request to:', `${API_BASE}/api/auth/login`);
         const res = await fetch(`${API_BASE}/api/auth/login`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify(payload)
         });
+        
+        console.log('[Login] Response received:');
+        console.log('[Login] Status:', res.status);
+        console.log('[Login] Status text:', res.statusText);
+        console.log('[Login] Headers:', Object.fromEntries(res.headers.entries()));
+        
         const data = await res.json();
-        console.log('[Login] Response status:', res.status, 'body:', data);
+        console.log('[Login] Response body:', data);
 
         if (!res.ok) {
           const msg = data.detail || data.error || 'Login failed';
@@ -277,26 +287,50 @@
           return;
         }
 
-        console.log('[Login] Success, storing tokens');
+        console.log('[Login] Login successful! Processing tokens...');
+        console.log('[Login] Access token received:', data.access_token ? `${data.access_token.substring(0, 20)}...` : 'NONE');
+        console.log('[Login] Refresh token received:', data.refresh_token ? `${data.refresh_token.substring(0, 20)}...` : 'NONE');
+        console.log('[Login] User info:', data.user);
+        
+        // Store in localStorage
         localStorage.setItem('access_token',  data.access_token);
         localStorage.setItem('refresh_token', data.refresh_token);
         localStorage.setItem('user_info', JSON.stringify(data.user));
+        console.log('[Login] Tokens stored in localStorage');
         
         // Set cookies with proper security attributes for server-side authentication
         const isSecure = window.location.protocol === 'https:';
-        // Set cookies with proper attributes
         const domain = window.location.hostname;
-        document.cookie = `access_token=${data.access_token};Path=/;Domain=${domain};SameSite=Lax${isSecure ? ';Secure' : ''}`;
-        document.cookie = `refresh_token=${data.refresh_token};Path=/;Domain=${domain};SameSite=Lax${isSecure ? ';Secure' : ''}`;
+        
+        console.log('[Login] Setting cookies:');
+        console.log('[Login] Domain:', domain);
+        console.log('[Login] Is secure:', isSecure);
+        
+        const accessCookie = `access_token=${data.access_token};Path=/;Domain=${domain};SameSite=Lax${isSecure ? ';Secure' : ''}`;
+        const refreshCookie = `refresh_token=${data.refresh_token};Path=/;Domain=${domain};SameSite=Lax${isSecure ? ';Secure' : ''}`;
+        
+        console.log('[Login] Access cookie string:', accessCookie);
+        console.log('[Login] Refresh cookie string:', refreshCookie);
+        
+        document.cookie = accessCookie;
+        document.cookie = refreshCookie;
+        
+        // Verify cookies were set
+        console.log('[Login] All cookies after setting:', document.cookie);
+        console.log('[Login] Access token cookie check:', document.cookie.includes('access_token'));
+        console.log('[Login] Refresh token cookie check:', document.cookie.includes('refresh_token'));
 
-        console.log('[Login] Redirecting to main UI…');
+        console.log('[Login] Redirecting to main UI in 100ms...');
         // Small delay to ensure cookies are set before redirect
         setTimeout(() => {
           window.location.href = '/';
         }, 100);
       }
       catch (err) {
-        console.error('[Login] Network/error:', err);
+        console.error('[Login] Network/fetch error occurred:');
+        console.error('[Login] Error type:', err.constructor.name);
+        console.error('[Login] Error message:', err.message);
+        console.error('[Login] Full error:', err);
         globalErr.textContent = 'Network error, please try again.';
         globalErr.style.display = 'block';
       }

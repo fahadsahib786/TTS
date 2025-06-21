@@ -51,7 +51,7 @@ import engine
 from models import CustomTTSRequest, ErrorResponse, UpdateStatusResponse
 import utils
 from database import get_db, User, UsageLog, UserSession, GenerationQueue, init_database
-from auth import auth_handler, create_user_session
+from auth import auth_handler, create_user_session, refresh_access_token
 from api import router as api_router
 
 # OpenAI-compatible request model
@@ -167,24 +167,34 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def inject_auth_header_from_cookie(request: Request, call_next):
     """Middleware to handle authentication from cookies or headers"""
     try:
+        logger.debug(f"[Middleware] Processing request: {request.method} {request.url.path}")
+        logger.debug(f"[Middleware] Request cookies: {dict(request.cookies)}")
+        
         # Check for existing Authorization header
         auth_header = request.headers.get("authorization")
+        logger.debug(f"[Middleware] Existing Authorization header: {auth_header[:50] if auth_header else 'None'}...")
         
         # If no Authorization header but we have an access_token cookie
         if not auth_header and "access_token" in request.cookies:
             token = request.cookies["access_token"]
+            logger.info(f"[Middleware] Found access_token cookie, injecting into Authorization header: {token[:20]}...")
+            
             # Create a mutable copy of headers
             headers = list(request.scope["headers"])
             headers.append((b"authorization", f"Bearer {token}".encode()))
             request.scope["headers"] = headers
+            logger.debug(f"[Middleware] Authorization header injected successfully")
             
             # Try to validate token
             try:
-                auth_handler.decode_token(token)
+                logger.debug(f"[Middleware] Validating injected token...")
+                payload = auth_handler.decode_token(token)
+                logger.debug(f"[Middleware] Token validation successful: {payload}")
             except Exception as e:
-                logger.debug(f"Cookie token validation failed: {e}")
+                logger.warning(f"[Middleware] Cookie token validation failed: {e}")
                 # If token is invalid and we have a refresh token, try to refresh
                 if "refresh_token" in request.cookies:
+                    logger.info(f"[Middleware] Attempting token refresh...")
                     try:
                         db = next(get_db())
                         refresh_result = await refresh_access_token(
@@ -192,18 +202,28 @@ async def inject_auth_header_from_cookie(request: Request, call_next):
                             db,
                             request
                         )
+                        logger.info(f"[Middleware] Token refresh successful, updating Authorization header")
                         # Update the Authorization header with new token
                         headers = list(request.scope["headers"])
                         headers = [h for h in headers if h[0] != b"authorization"]
                         headers.append((b"authorization", f"Bearer {refresh_result['access_token']}".encode()))
                         request.scope["headers"] = headers
                     except Exception as refresh_error:
-                        logger.debug(f"Token refresh failed: {refresh_error}")
+                        logger.warning(f"[Middleware] Token refresh failed: {refresh_error}")
                         # Let the request continue - the auth handler will redirect if needed
+                else:
+                    logger.debug(f"[Middleware] No refresh token available for refresh attempt")
+        elif auth_header:
+            logger.debug(f"[Middleware] Authorization header already present, skipping cookie injection")
+        else:
+            logger.debug(f"[Middleware] No Authorization header and no access_token cookie found")
+            
     except Exception as e:
-        logger.error(f"Auth middleware error: {e}")
+        logger.error(f"[Middleware] Auth middleware error: {e}", exc_info=True)
         
-    return await call_next(request)
+    response = await call_next(request)
+    logger.debug(f"[Middleware] Request processed, response status: {response.status_code}")
+    return response
 
 # CORS Middleware
 app.add_middleware(
@@ -317,43 +337,123 @@ async def get_script():
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def get_web_ui(request: Request):
     """Serves the main web interface (index.html)."""
-    logger.info("Request received for main UI page ('/').")
+    logger.info("[MainUI] Request received for main UI page ('/').")
+    logger.info(f"[MainUI] Request URL: {request.url}")
+    logger.info(f"[MainUI] Request headers: {dict(request.headers)}")
+    logger.info(f"[MainUI] Request cookies: {dict(request.cookies)}")
     
     try:
-        # Use the auth handler to get the current user
-        # This will automatically handle token validation and user checks
-        current_user = await auth_handler.get_current_user(
-            credentials=None,  # Will be handled by middleware
-            db=next(get_db()),
-            request=request
-        )
+        # Check authentication manually to handle redirects properly
+        # Try to get token from cookie first, then from Authorization header
+        logger.info("[MainUI] Checking for authentication token...")
+        token = request.cookies.get("access_token")
+        token_source = "cookie"
         
-        # If we get here, user is authenticated and valid
-        logger.info(f"User {current_user.username} authenticated successfully")
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "user": current_user
-        })
-        
-    except HTTPException as auth_error:
-        logger.info(f"Authentication failed: {auth_error.detail}")
-        
-        # Handle specific error cases
-        if auth_error.status_code == 403:
-            # User account issues (disabled/expired)
-            return templates.TemplateResponse(
-                "login.html",
-                {
-                    "request": request,
-                    "error_message": auth_error.detail
-                }
-            )
+        if not token:
+            logger.info("[MainUI] No access_token cookie found, checking Authorization header")
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+                token_source = "header"
+                logger.info("[MainUI] Token found in Authorization header")
+            else:
+                logger.info("[MainUI] No Authorization header with Bearer token found")
         else:
-            # General authentication failure - redirect to login
+            logger.info(f"[MainUI] Token found in cookie: {token[:20]}...")
+        
+        if not token:
+            logger.info("[MainUI] No authentication token found, redirecting to login")
+            return RedirectResponse(url="/login", status_code=303)
+        
+        logger.info(f"[MainUI] Using token from {token_source}: {token[:20]}...")
+        
+        try:
+            # Validate token and get user
+            logger.info("[MainUI] Decoding and validating token...")
+            payload = auth_handler.decode_token(token)
+            logger.info(f"[MainUI] Token payload: {payload}")
+            
+            user_id = payload.get("sub")
+            if not user_id:
+                logger.warning("[MainUI] Invalid token format - no 'sub' field, redirecting to login")
+                return RedirectResponse(url="/login", status_code=303)
+            
+            logger.info(f"[MainUI] Token valid, user ID: {user_id}")
+            
+            # Get database session and user
+            logger.info("[MainUI] Getting database session and looking up user...")
+            db = next(get_db())
+            user = db.query(User).filter(User.id == user_id).first()
+            
+            if not user:
+                logger.warning(f"[MainUI] User with ID {user_id} not found in database, redirecting to login")
+                return RedirectResponse(url="/login", status_code=303)
+            
+            logger.info(f"[MainUI] User found: {user.username} (ID: {user.id}, Active: {user.is_active})")
+            
+            if not user.is_active:
+                logger.warning(f"[MainUI] User {user.username} account is disabled")
+                return templates.TemplateResponse(
+                    "login.html",
+                    {
+                        "request": request,
+                        "error_message": "Your account has been disabled. Please contact an administrator."
+                    }
+                )
+            
+            if user.is_expired():
+                logger.warning(f"[MainUI] User {user.username} account is expired")
+                return templates.TemplateResponse(
+                    "login.html",
+                    {
+                        "request": request,
+                        "error_message": "Your account has expired. Please contact an administrator to renew."
+                    }
+                )
+            
+            # Check if this is a valid session token
+            logger.info(f"[MainUI] Checking for valid session with token...")
+            session = (
+                db.query(UserSession)
+                .filter(
+                    UserSession.user_id == user_id,
+                    UserSession.session_token == token,
+                    UserSession.is_active == True
+                )
+                .first()
+            )
+            
+            if session:
+                logger.info(f"[MainUI] Session found: ID={session.id}, Expires={session.expires_at}, Expired={session.is_expired()}")
+                
+                if not session.is_expired():
+                    # Valid session found, update last used time
+                    logger.info(f"[MainUI] Session is valid, updating last used time")
+                    session.last_used = datetime.utcnow()
+                    session.ip_address = request.client.host
+                    session.user_agent = request.headers.get("user-agent")
+                    db.commit()
+                    
+                    # User is authenticated, serve the main UI
+                    logger.info(f"[MainUI] User {user.username} authenticated successfully, serving main UI")
+                    return templates.TemplateResponse("index.html", {
+                        "request": request,
+                        "user": user
+                    })
+                else:
+                    logger.warning(f"[MainUI] Session {session.id} is expired, redirecting to login")
+                    return RedirectResponse(url="/login", status_code=303)
+            else:
+                # Session not found
+                logger.warning(f"[MainUI] No session found for user {user.username} with token {token[:20]}..., redirecting to login")
+                return RedirectResponse(url="/login", status_code=303)
+            
+        except Exception as auth_error:
+            logger.error(f"[MainUI] Authentication validation failed: {auth_error}", exc_info=True)
             return RedirectResponse(url="/login", status_code=303)
             
     except Exception as e_render:
-        logger.error(f"Error rendering main UI page: {e_render}", exc_info=True)
+        logger.error(f"[MainUI] Error rendering main UI page: {e_render}", exc_info=True)
         return HTMLResponse(
             "<html><body><h1>Internal Server Error</h1><p>Could not load the TTS interface. "
             "Please check server logs for more details.</p></body></html>",

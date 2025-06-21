@@ -174,34 +174,59 @@ async def create_user_session(
     response = None
 ) -> Dict[str, Any]:
     """Create new user session with tokens"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"[Session] Creating session for user {user.username} (ID: {user.id})")
+    
     # Create tokens
+    logger.info(f"[Session] Creating access token for user {user.id}")
     access_token = auth_handler.create_access_token({"sub": user.id})
+    logger.info(f"[Session] Access token created: {access_token[:20]}...")
+    
+    logger.info(f"[Session] Creating refresh token for user {user.id}")
     refresh_token = auth_handler.create_refresh_token({"sub": user.id})
+    logger.info(f"[Session] Refresh token created: {refresh_token[:20]}...")
     
     # Create session record
+    session_expires_at = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    logger.info(f"[Session] Session will expire at: {session_expires_at}")
+    
     session = UserSession(
         user_id=user.id,
         session_token=access_token,
         refresh_token=refresh_token,
-        expires_at=datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        expires_at=session_expires_at
     )
     
     if request:
         session.ip_address = request.client.host
         session.user_agent = request.headers.get("user-agent")
+        logger.info(f"[Session] Session IP: {session.ip_address}")
+        logger.info(f"[Session] Session User-Agent: {session.user_agent}")
     
+    logger.info(f"[Session] Adding session to database")
     db.add(session)
     db.commit()
+    logger.info(f"[Session] Session saved to database with ID: {session.id}")
     
     # Set secure cookies if response object is provided
     if response:
+        logger.info(f"[Session] Setting HTTP-only cookies in response")
         # Determine if we're in a secure environment
         is_secure = request.url.scheme == "https" if request else False
+        logger.info(f"[Session] Cookie secure flag: {is_secure}")
+        
+        access_cookie_max_age = ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        refresh_cookie_max_age = REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+        
+        logger.info(f"[Session] Access cookie max age: {access_cookie_max_age} seconds")
+        logger.info(f"[Session] Refresh cookie max age: {refresh_cookie_max_age} seconds")
         
         response.set_cookie(
             key="access_token",
             value=access_token,
-            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            max_age=access_cookie_max_age,
             httponly=True,
             secure=is_secure,  # Only set secure flag if using HTTPS
             samesite="lax"  # Changed to lax for better compatibility
@@ -209,29 +234,39 @@ async def create_user_session(
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
-            max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+            max_age=refresh_cookie_max_age,
             httponly=True,
             secure=is_secure,
             samesite="lax"
         )
+        logger.info(f"[Session] HTTP-only cookies set in response")
+    else:
+        logger.warning(f"[Session] No response object provided, cookies not set")
     
-    return {
+    user_data = {
+        "id": user.id,
+        "email": user.email,
+        "username": user.username,
+        "is_admin": user.is_admin,
+        "monthly_char_limit": user.monthly_char_limit,
+        "daily_char_limit": user.daily_char_limit,
+        "per_request_char_limit": user.per_request_char_limit,
+        "chars_used_current_month": user.chars_used_current_month,
+        "chars_used_today": user.chars_used_today
+    }
+    
+    result = {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
         "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "username": user.username,
-            "is_admin": user.is_admin,
-            "monthly_char_limit": user.monthly_char_limit,
-            "daily_char_limit": user.daily_char_limit,
-            "per_request_char_limit": user.per_request_char_limit,
-            "chars_used_current_month": user.chars_used_current_month,
-            "chars_used_today": user.chars_used_today
-        }
+        "user": user_data
     }
+    
+    logger.info(f"[Session] Session creation completed for user {user.username}")
+    logger.info(f"[Session] Returning session data with token type: {result['token_type']}")
+    
+    return result
 
 async def refresh_access_token(
     refresh_token: str,
