@@ -201,7 +201,17 @@ async def auth_exception_handler(request: Request, exc: FastAPIHTTPException):
     if exc.status_code == 401:
         # Check if this is a browser request (HTML) vs API request (JSON)
         accept_header = request.headers.get("accept", "")
-        if "text/html" in accept_header:
+        user_agent = request.headers.get("user-agent", "")
+        
+        # More comprehensive check for browser requests
+        is_browser_request = (
+            "text/html" in accept_header or 
+            "Mozilla" in user_agent or
+            request.url.path in ["/", "/admin"] or
+            not request.url.path.startswith("/api/")
+        )
+        
+        if is_browser_request:
             # Redirect to login page for browser requests
             return RedirectResponse(url="/login", status_code=303)
         else:
@@ -260,17 +270,46 @@ async def get_script():
 
 # Main routes
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def get_web_ui(
-    request: Request,
-    current_user: User = Depends(auth_handler.get_current_user)
-):
+async def get_web_ui(request: Request):
     """Serves the main web interface (index.html)."""
     logger.info("Request received for main UI page ('/').")
+    
+    # Check authentication manually to handle redirects properly
     try:
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "user": current_user
-        })
+        # Try to get token from cookie first, then from Authorization header
+        token = request.cookies.get("access_token")
+        if not token:
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+        
+        if not token:
+            logger.info("No authentication token found, redirecting to login")
+            return RedirectResponse(url="/login", status_code=303)
+        
+        # Validate token and get user
+        try:
+            payload = auth_handler.decode_token(token)
+            user_id = payload.get("sub")
+            if not user_id:
+                raise HTTPException(status_code=401, detail="Invalid token")
+            
+            # Get database session and user
+            db = next(get_db())
+            user = db.query(User).filter(User.id == user_id).first()
+            if not user or not user.is_active or user.is_expired():
+                raise HTTPException(status_code=401, detail="User not found or inactive")
+            
+            # User is authenticated, serve the main UI
+            return templates.TemplateResponse("index.html", {
+                "request": request,
+                "user": user
+            })
+            
+        except Exception as auth_error:
+            logger.info(f"Authentication failed: {auth_error}, redirecting to login")
+            return RedirectResponse(url="/login", status_code=303)
+            
     except Exception as e_render:
         logger.error(f"Error rendering main UI page: {e_render}", exc_info=True)
         return HTMLResponse(
@@ -286,10 +325,23 @@ async def get_login_page(request: Request):
     token = request.cookies.get("access_token")
     if token:
         try:
-            auth_handler.decode_token(token)
-            return RedirectResponse(url="/", status_code=303)
-        except:
-            pass
+            payload = auth_handler.decode_token(token)
+            user_id = payload.get("sub")
+            if user_id:
+                # Verify user still exists and is active
+                db = next(get_db())
+                user = db.query(User).filter(User.id == user_id).first()
+                if user and user.is_active and not user.is_expired():
+                    logger.info("User already authenticated, redirecting to main page")
+                    return RedirectResponse(url="/", status_code=303)
+        except Exception as e:
+            logger.info(f"Token validation failed during login page access: {e}")
+            # Clear invalid cookie
+            response = templates.TemplateResponse("login.html", {"request": request})
+            response.delete_cookie("access_token")
+            response.delete_cookie("refresh_token")
+            return response
+    
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)

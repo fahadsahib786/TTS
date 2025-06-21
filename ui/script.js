@@ -30,8 +30,21 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     // --- Authentication Functions ---
     async function checkAuth() {
-        const token = localStorage.getItem('access_token');
+        // Try to get token from localStorage first, then from cookies
+        let token = localStorage.getItem('access_token');
         if (!token) {
+            // Try to get from cookie
+            const cookies = document.cookie.split(';');
+            const tokenCookie = cookies.find(cookie => cookie.trim().startsWith('access_token='));
+            if (tokenCookie) {
+                token = tokenCookie.split('=')[1];
+                // Store in localStorage for consistency
+                localStorage.setItem('access_token', token);
+            }
+        }
+
+        if (!token) {
+            console.log('No authentication token found, redirecting to login');
             window.location.href = '/login';
             return null;
         }
@@ -45,9 +58,16 @@ document.addEventListener('DOMContentLoaded', async function () {
 
             if (!response.ok) {
                 if (response.status === 401) {
-                    localStorage.removeItem('access_token');
-                    window.location.href = '/login';
-                    return null;
+                    console.log('Authentication failed, attempting token refresh');
+                    // Try to refresh token before redirecting
+                    const refreshSuccess = await attemptTokenRefresh();
+                    if (!refreshSuccess) {
+                        clearAuthData();
+                        window.location.href = '/login';
+                        return null;
+                    }
+                    // Retry with new token
+                    return await checkAuth();
                 }
                 throw new Error('Failed to get user info');
             }
@@ -57,8 +77,54 @@ document.addEventListener('DOMContentLoaded', async function () {
             return currentUser;
         } catch (error) {
             console.error('Auth check failed:', error);
+            clearAuthData();
+            window.location.href = '/login';
             return null;
         }
+    }
+
+    async function attemptTokenRefresh() {
+        const refreshToken = localStorage.getItem('refresh_token');
+        if (!refreshToken) {
+            console.log('No refresh token available');
+            return false;
+        }
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
+                method: 'POST',
+                headers: {
+                    'X-Refresh-Token': refreshToken,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            if (!response.ok) {
+                console.log('Token refresh failed');
+                return false;
+            }
+
+            const data = await response.json();
+            localStorage.setItem('access_token', data.access_token);
+            
+            // Update cookie as well
+            const isSecure = window.location.protocol === 'https:';
+            document.cookie = `access_token=${data.access_token};Path=/;SameSite=Strict${isSecure ? ';Secure' : ''};HttpOnly=false`;
+            
+            console.log('Token refreshed successfully');
+            return true;
+        } catch (error) {
+            console.error('Token refresh error:', error);
+            return false;
+        }
+    }
+
+    function clearAuthData() {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        localStorage.removeItem('user_info');
+        document.cookie = 'access_token=;Path=/;expires=Thu, 01 Jan 1970 00:00:01 GMT';
+        document.cookie = 'refresh_token=;Path=/;expires=Thu, 01 Jan 1970 00:00:01 GMT';
     }
 
     function updateUserInfo() {
@@ -106,9 +172,7 @@ document.addEventListener('DOMContentLoaded', async function () {
                     console.error('Logout error:', error);
                 } finally {
                     // Clear all stored data
-                    localStorage.removeItem('access_token');
-                    localStorage.removeItem('refresh_token');
-                    localStorage.removeItem('user_info');
+                    clearAuthData();
                     window.location.href = '/login';
                 }
             });
@@ -163,8 +227,20 @@ document.addEventListener('DOMContentLoaded', async function () {
     }
 
     async function makeAuthenticatedRequest(url, options = {}) {
-        const token = localStorage.getItem('access_token');
+        // Try to get token from localStorage first, then from cookies
+        let token = localStorage.getItem('access_token');
         if (!token) {
+            const cookies = document.cookie.split(';');
+            const tokenCookie = cookies.find(cookie => cookie.trim().startsWith('access_token='));
+            if (tokenCookie) {
+                token = tokenCookie.split('=')[1];
+                // Store in localStorage for consistency
+                localStorage.setItem('access_token', token);
+            }
+        }
+
+        if (!token) {
+            console.log('No authentication token found, redirecting to login');
             window.location.href = '/login';
             return null;
         }
@@ -178,43 +254,40 @@ document.addEventListener('DOMContentLoaded', async function () {
             }
         };
 
-        const response = await fetch(url, authOptions);
-        
-        if (response.status === 401) {
-            // Try to refresh token first
-            const refreshToken = localStorage.getItem('refresh_token');
-            if (refreshToken) {
-                try {
-                    const refreshResponse = await fetch(`${API_BASE_URL}/api/auth/refresh`, {
-                        method: 'POST',
-                        headers: {
-                            'X-Refresh-Token': refreshToken,
-                            'Content-Type': 'application/json'
-                        }
-                    });
-                    
-                    if (refreshResponse.ok) {
-                        const refreshData = await refreshResponse.json();
-                        localStorage.setItem('access_token', refreshData.access_token);
-                        
-                        // Retry the original request with new token
-                        authOptions.headers['Authorization'] = `Bearer ${refreshData.access_token}`;
-                        return await fetch(url, authOptions);
-                    }
-                } catch (error) {
-                    console.error('Token refresh failed:', error);
+        try {
+            const response = await fetch(url, authOptions);
+            
+            if (response.status === 401) {
+                console.log('Request failed with 401, attempting token refresh');
+                const refreshSuccess = await attemptTokenRefresh();
+                if (!refreshSuccess) {
+                    clearAuthData();
+                    window.location.href = '/login';
+                    return null;
                 }
+                
+                // Retry the original request with new token
+                const newToken = localStorage.getItem('access_token');
+                authOptions.headers['Authorization'] = `Bearer ${newToken}`;
+                const retryResponse = await fetch(url, authOptions);
+                
+                if (!retryResponse.ok) {
+                    throw new Error('Request failed after token refresh');
+                }
+                
+                return retryResponse;
             }
             
-            // If refresh fails or no refresh token, redirect to login
-            localStorage.removeItem('access_token');
-            localStorage.removeItem('refresh_token');
-            localStorage.removeItem('user_info');
-            window.location.href = '/login';
-            return null;
+            return response;
+        } catch (error) {
+            console.error('Request failed:', error);
+            if (error.message.includes('token')) {
+                clearAuthData();
+                window.location.href = '/login';
+                return null;
+            }
+            throw error;
         }
-
-        return response;
     }
 
     // --- DOM Element Selectors ---

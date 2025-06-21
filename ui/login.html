@@ -268,12 +268,18 @@
         console.log('[Login] Success, storing tokens');
         localStorage.setItem('access_token',  data.access_token);
         localStorage.setItem('refresh_token', data.refresh_token);
-        // also set cookies for full-page loads if your backend reads them:
-        document.cookie = `access_token=${data.access_token};Path=/;SameSite=Lax`;
-        document.cookie = `refresh_token=${data.refresh_token};Path=/;SameSite=Lax`;
+        localStorage.setItem('user_info', JSON.stringify(data.user));
+        
+        // Set cookies with proper security attributes for server-side authentication
+        const isSecure = window.location.protocol === 'https:';
+        document.cookie = `access_token=${data.access_token};Path=/;SameSite=Strict${isSecure ? ';Secure' : ''};HttpOnly=false`;
+        document.cookie = `refresh_token=${data.refresh_token};Path=/;SameSite=Strict${isSecure ? ';Secure' : ''};HttpOnly=false`;
 
         console.log('[Login] Redirecting to main UI…');
-        window.location.href = '/';
+        // Small delay to ensure cookies are set before redirect
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 100);
       }
       catch (err) {
         console.error('[Login] Network/error:', err);
