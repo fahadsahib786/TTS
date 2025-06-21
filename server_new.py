@@ -339,7 +339,7 @@ async def get_script():
 
 # Main routes
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def get_web_ui(request: Request):
+async def get_web_ui(request: Request, db: Session = Depends(get_db)):
     """Serves the main web interface (index.html)."""
     logger.info("[MainUI] Request received for main UI page ('/').")
     logger.debug(f"[MainUI] Request URL: {request.url}")
@@ -349,11 +349,19 @@ async def get_web_ui(request: Request):
         # Use the auth dependency to handle authentication
         # This will automatically handle token validation, refresh, etc.
         try:
-            current_user = await auth_handler.get_current_user(request, next(get_db()))
-            logger.info(f"[MainUI] User {current_user.username} authenticated successfully, serving main UI")
+            current_user = await auth_handler.get_current_user(request, db)
+            # Get user data that we want to pass to the template
+            user_data = {
+                "id": current_user.id,
+                "username": current_user.username,
+                "email": current_user.email,
+                "is_admin": current_user.is_admin,
+                "is_active": current_user.is_active
+            }
+            logger.info(f"[MainUI] User {user_data['username']} authenticated successfully, serving main UI")
             return templates.TemplateResponse("index.html", {
                 "request": request,
-                "user": current_user
+                "user": user_data
             })
         except HTTPException as auth_exc:
             if auth_exc.status_code == 401:
@@ -394,11 +402,19 @@ async def get_login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
-async def get_admin_page(request: Request):
+async def get_admin_page(request: Request, db: Session = Depends(get_db)):
     """Serves the admin page (admin users only)."""
     try:
-        current_user = await auth_handler.get_current_admin_user(request, next(get_db()))
-        return templates.TemplateResponse("admin.html", {"request": request, "user": current_user})
+        current_user = await auth_handler.get_current_admin_user(request, db)
+        # Get user data that we want to pass to the template
+        user_data = {
+            "id": current_user.id,
+            "username": current_user.username,
+            "email": current_user.email,
+            "is_admin": current_user.is_admin,
+            "is_active": current_user.is_active
+        }
+        return templates.TemplateResponse("admin.html", {"request": request, "user": user_data})
     except HTTPException as auth_exc:
         if auth_exc.status_code == 401:
             return RedirectResponse(url="/login", status_code=303)
