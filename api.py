@@ -152,9 +152,22 @@ async def logout(
     current_token = credentials.credentials if credentials else None
     await logout_user(current_user, db, current_token, all_sessions)
     
-    # Clear secure cookies
-    response.delete_cookie(key="access_token", httponly=True, secure=True, samesite="strict")
-    response.delete_cookie(key="refresh_token", httponly=True, secure=True, samesite="strict")
+    # Clear cookies with matching settings
+    is_secure = request.url.scheme == "https"
+    response.delete_cookie(
+        key="access_token",
+        httponly=True,
+        secure=is_secure,
+        samesite="lax",
+        path="/"
+    )
+    response.delete_cookie(
+        key="refresh_token",
+        httponly=True,
+        secure=is_secure,
+        samesite="lax",
+        path="/"
+    )
     
     return {"message": "Successfully logged out"}
 

@@ -168,10 +168,10 @@ async def inject_auth_header_from_cookie(request: Request, call_next):
     # if no Authorization header but we have an access_token cookie…
     if "authorization" not in request.headers and "access_token" in request.cookies:
         token = request.cookies["access_token"]
-        # append an Authorization: Bearer <token> header for HTTPBearer to see
-        request.scope["headers"].append(
-            (b"authorization", f"Bearer {token}".encode())
-        )
+        # Create a mutable copy of headers
+        headers = list(request.scope["headers"])
+        headers.append((b"authorization", f"Bearer {token}".encode()))
+        request.scope["headers"] = headers
     return await call_next(request)
 
 # CORS Middleware

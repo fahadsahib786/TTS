@@ -160,21 +160,24 @@ async def create_user_session(
     
     # Set secure cookies if response object is provided
     if response:
+        # Determine if we're in a secure environment
+        is_secure = request.url.scheme == "https" if request else False
+        
         response.set_cookie(
             key="access_token",
             value=access_token,
             max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
             httponly=True,
-            secure=True,  # Only send over HTTPS
-            samesite="strict"
+            secure=is_secure,  # Only set secure flag if using HTTPS
+            samesite="lax"  # Changed to lax for better compatibility
         )
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
             max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
             httponly=True,
-            secure=True,
-            samesite="strict"
+            secure=is_secure,
+            samesite="lax"
         )
     
     return {

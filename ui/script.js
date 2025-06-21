@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             
             // Update cookie as well
             const isSecure = window.location.protocol === 'https:';
-            document.cookie = `access_token=${data.access_token};Path=/;SameSite=Strict${isSecure ? ';Secure' : ''};HttpOnly=false`;
+            document.cookie = `access_token=${data.access_token};Path=/;SameSite=Lax${isSecure ? ';Secure' : ''}`;
             
             console.log('Token refreshed successfully');
             return true;
