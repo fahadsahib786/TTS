@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session
 from jose import JWTError, jwt
 from database import User, UserSession, get_db
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Configuration
 SECRET_KEY = os.getenv("JWT_SECRET_KEY")
@@ -32,6 +35,9 @@ class AuthHandler:
     def create_access_token(self, data: dict) -> str:
         """Create JWT access token"""
         to_encode = data.copy()
+        # Ensure 'sub' is a string as required by JWT standard
+        if 'sub' in to_encode:
+            to_encode['sub'] = str(to_encode['sub'])
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         to_encode.update({"exp": expire})
         return jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
@@ -39,6 +45,9 @@ class AuthHandler:
     def create_refresh_token(self, data: dict) -> str:
         """Create JWT refresh token"""
         to_encode = data.copy()
+        # Ensure 'sub' is a string as required by JWT standard
+        if 'sub' in to_encode:
+            to_encode['sub'] = str(to_encode['sub'])
         expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
         to_encode.update({"exp": expire})
         return jwt.encode(to_encode, self.secret_key, algorithm=self.algorithm)
@@ -47,8 +56,19 @@ class AuthHandler:
         """Decode and validate JWT token"""
         try:
             payload = jwt.decode(token, self.secret_key, algorithms=[self.algorithm])
+            # Convert 'sub' back to integer if it exists
+            if 'sub' in payload:
+                try:
+                    payload['sub'] = int(payload['sub'])
+                except (TypeError, ValueError):
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Invalid user ID in token",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
             return payload
-        except JWTError:
+        except JWTError as e:
+            logger.error(f"[Auth] JWT decode error: {str(e)}")
             raise HTTPException(
                 status_code=401,
                 detail="Invalid authentication credentials",
@@ -181,11 +201,11 @@ async def create_user_session(
     
     # Create tokens
     logger.info(f"[Session] Creating access token for user {user.id}")
-    access_token = auth_handler.create_access_token({"sub": user.id})
+    access_token = auth_handler.create_access_token({"sub": str(user.id)})
     logger.info(f"[Session] Access token created: {access_token[:20]}...")
     
     logger.info(f"[Session] Creating refresh token for user {user.id}")
-    refresh_token = auth_handler.create_refresh_token({"sub": user.id})
+    refresh_token = auth_handler.create_refresh_token({"sub": str(user.id)})
     logger.info(f"[Session] Refresh token created: {refresh_token[:20]}...")
     
     # Create session record
@@ -302,7 +322,7 @@ async def refresh_access_token(
             raise HTTPException(status_code=401, detail="User is inactive or expired")
         
         # Create new access token
-        new_access_token = auth_handler.create_access_token({"sub": user_id})
+        new_access_token = auth_handler.create_access_token({"sub": str(user_id)})
         
         # Update session
         session.session_token = new_access_token
