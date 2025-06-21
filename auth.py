@@ -77,21 +77,25 @@ class AuthHandler:
 
     async def get_current_user(
         self,
-        credentials: HTTPAuthorizationCredentials = Security(security),
-        db: Session = Depends(get_db),
-        request: Request = None
+        request: Request,
+        db: Session
     ) -> User:
         """Get current authenticated user from token"""
         try:
-            # Handle case where credentials might be None (from middleware)
-            if credentials is None:
-                # Try to get token from request headers (set by middleware)
-                auth_header = request.headers.get("authorization", "") if request else ""
-                if not auth_header.startswith("Bearer "):
-                    raise HTTPException(status_code=401, detail="No authentication token provided")
+            # Try to get token from request headers (set by middleware) or cookies
+            token = None
+            
+            # First try Authorization header
+            auth_header = request.headers.get("authorization", "")
+            if auth_header.startswith("Bearer "):
                 token = auth_header[7:]
-            else:
-                token = credentials.credentials
+            
+            # If no header token, try cookie
+            if not token:
+                token = request.cookies.get("access_token")
+            
+            if not token:
+                raise HTTPException(status_code=401, detail="No authentication token provided")
             
             # First try to validate as a session token
             payload = self.decode_token(token)
@@ -166,18 +170,22 @@ class AuthHandler:
 
     async def get_current_active_user(
         self,
-        current_user: User = Depends(get_current_user)
+        request: Request,
+        db: Session
     ) -> User:
         """Get current active user"""
+        current_user = await self.get_current_user(request, db)
         if not current_user.is_active:
             raise HTTPException(status_code=400, detail="Inactive user")
         return current_user
 
     async def get_current_admin_user(
         self,
-        current_user: User = Depends(get_current_user)
+        request: Request,
+        db: Session
     ) -> User:
         """Get current admin user"""
+        current_user = await self.get_current_user(request, db)
         if not current_user.is_admin:
             raise HTTPException(
                 status_code=403,

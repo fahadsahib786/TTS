@@ -187,12 +187,19 @@ async def logout(
     request: Request,
     response: Response,
     all_sessions: bool = False,
-    current_user: User = Depends(auth_handler.get_current_user),
-    credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ):
     """Logout user and invalidate session(s)"""
-    current_token = credentials.credentials if credentials else None
+    current_user = await auth_handler.get_current_user(request, db)
+    
+    # Get current token from request
+    current_token = None
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        current_token = auth_header[7:]
+    elif request.cookies.get("access_token"):
+        current_token = request.cookies.get("access_token")
+    
     await logout_user(current_user, db, current_token, all_sessions)
     
     # Clear cookies with matching settings
@@ -220,10 +227,11 @@ async def logout(
 @router.post("/users", response_model=UserResponse)
 async def create_user(
     user_data: UserCreate,
-    current_user: User = Depends(auth_handler.get_current_admin_user),
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Create new user (admin only)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)
     # Validate password complexity
     is_valid, message = User.validate_password_complexity(user_data.password)
     if not is_valid:
@@ -257,22 +265,24 @@ async def create_user(
 
 @router.get("/users", response_model=List[UserResponse])
 async def list_users(
+    request: Request,
+    db: Session = Depends(get_db),
     skip: int = 0,
-    limit: int = 100,
-    current_user: User = Depends(auth_handler.get_current_admin_user),
-    db: Session = Depends(get_db)
+    limit: int = 100
 ):
     """List all users (admin only)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)
     users = db.query(User).offset(skip).limit(limit).all()
     return users
 
 @router.get("/users/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: int,
-    current_user: User = Depends(auth_handler.get_current_admin_user),
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Get user details (admin only)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -282,10 +292,11 @@ async def get_user(
 async def update_user(
     user_id: int,
     user_data: UserUpdate,
-    current_user: User = Depends(auth_handler.get_current_admin_user),
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Update user details (admin only)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -341,10 +352,11 @@ async def update_user(
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
-    current_user: User = Depends(auth_handler.get_current_admin_user),
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Delete user (admin only)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -360,10 +372,11 @@ async def delete_user(
 # --- Admin Statistics Routes ---
 @router.get("/stats")
 async def get_system_stats(
-    current_user: User = Depends(auth_handler.get_current_admin_user),
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Get system-wide statistics (admin only)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)
     # Get total characters generated
     total_characters = db.query(func.sum(UsageLog.characters_used)).scalar() or 0
     
@@ -388,12 +401,13 @@ async def get_system_stats(
 @router.get("/users/{user_id}/usage", response_model=List[UsageLogResponse])
 async def get_user_usage(
     user_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
     start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    current_user: User = Depends(auth_handler.get_current_user),
-    db: Session = Depends(get_db)
+    end_date: Optional[datetime] = None
 ):
     """Get user usage statistics"""
+    current_user = await auth_handler.get_current_user(request, db)
     # Only admin can view other users' usage
     if not current_user.is_admin and current_user.id != user_id:
         raise HTTPException(status_code=403, detail="Not authorized to view this user's usage")
@@ -411,10 +425,11 @@ async def get_user_usage(
 @router.get("/users/{user_id}/usage/summary")
 async def get_user_usage_summary(
     user_id: int,
-    current_user: User = Depends(auth_handler.get_current_admin_user),
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Get user usage summary statistics (admin only)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)
     # Get total characters used
     total_chars = db.query(func.sum(UsageLog.characters_used)).filter(UsageLog.user_id == user_id).scalar() or 0
     
@@ -440,35 +455,41 @@ async def get_user_usage_summary(
 # --- Current User Routes ---
 @router.get("/users/me", response_model=UserResponse)
 async def get_current_user_info(
-    current_user: User = Depends(auth_handler.get_current_user)
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """Get current user information"""
+    current_user = await auth_handler.get_current_user(request, db)
     return current_user
 
 @router.get("/users/me/usage", response_model=List[UsageLogResponse])
 async def get_current_user_usage(
+    request: Request,
+    db: Session = Depends(get_db),
     start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    current_user: User = Depends(auth_handler.get_current_user),
-    db: Session = Depends(get_db)
+    end_date: Optional[datetime] = None
 ):
     """Get current user's usage statistics"""
-    return await get_user_usage(current_user.id, start_date, end_date, current_user, db)
+    current_user = await auth_handler.get_current_user(request, db)
+    return await get_user_usage(current_user.id, start_date, end_date, request, db)
 
 @router.get("/users/me/usage/summary")
 async def get_current_user_usage_summary(
-    current_user: User = Depends(auth_handler.get_current_user),
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Get current user's usage summary"""
-    return await get_user_usage_summary(current_user.id, current_user, db)
+    current_user = await auth_handler.get_current_user(request, db)
+    return await get_user_usage_summary(current_user.id, request, db)
 
 # --- Configuration Management Routes ---
 @router.get("/config")
 async def get_config(
-    current_user: User = Depends(auth_handler.get_current_admin_user)
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """Get system configuration (admin only)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)
     # Return basic configuration settings that can be modified
     return {
         "max_text_length": 5000,
@@ -482,9 +503,11 @@ async def get_config(
 @router.post("/config")
 async def update_config(
     config_data: dict,
-    current_user: User = Depends(auth_handler.get_current_admin_user)
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """Update system configuration (admin only)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)
     # In a real implementation, you would save these to a config file or database
     # For now, just return success
     return {"message": "Configuration updated successfully"}

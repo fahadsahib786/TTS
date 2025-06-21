@@ -300,14 +300,11 @@
         
         // Set cookies with proper security attributes for server-side authentication
         const isSecure = window.location.protocol === 'https:';
-        const domain = window.location.hostname;
-        
         console.log('[Login] Setting cookies:');
-        console.log('[Login] Domain:', domain);
         console.log('[Login] Is secure:', isSecure);
         
-        const accessCookie = `access_token=${data.access_token};Path=/;Domain=${domain};SameSite=Lax${isSecure ? ';Secure' : ''}`;
-        const refreshCookie = `refresh_token=${data.refresh_token};Path=/;Domain=${domain};SameSite=Lax${isSecure ? ';Secure' : ''}`;
+        const accessCookie = `access_token=${data.access_token};Path=/;SameSite=Lax${isSecure ? ';Secure' : ''}`;
+        const refreshCookie = `refresh_token=${data.refresh_token};Path=/;SameSite=Lax${isSecure ? ';Secure' : ''}`;
         
         console.log('[Login] Access cookie string:', accessCookie);
         console.log('[Login] Refresh cookie string:', refreshCookie);

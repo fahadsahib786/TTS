@@ -342,119 +342,25 @@ async def get_script():
 async def get_web_ui(request: Request):
     """Serves the main web interface (index.html)."""
     logger.info("[MainUI] Request received for main UI page ('/').")
-    logger.info(f"[MainUI] Request URL: {request.url}")
-    logger.info(f"[MainUI] Request headers: {dict(request.headers)}")
-    logger.info(f"[MainUI] Request cookies: {dict(request.cookies)}")
+    logger.debug(f"[MainUI] Request URL: {request.url}")
+    logger.debug(f"[MainUI] Request cookies: {dict(request.cookies)}")
     
     try:
-        # Check authentication manually to handle redirects properly
-        # Try to get token from cookie first, then from Authorization header
-        logger.info("[MainUI] Checking for authentication token...")
-        token = request.cookies.get("access_token")
-        token_source = "cookie"
-        
-        if not token:
-            logger.info("[MainUI] No access_token cookie found, checking Authorization header")
-            auth_header = request.headers.get("authorization", "")
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]
-                token_source = "header"
-                logger.info("[MainUI] Token found in Authorization header")
-            else:
-                logger.info("[MainUI] No Authorization header with Bearer token found")
-        else:
-            logger.info(f"[MainUI] Token found in cookie: {token[:20]}...")
-        
-        if not token:
-            logger.info("[MainUI] No authentication token found, redirecting to login")
-            return RedirectResponse(url="/login", status_code=303)
-        
-        logger.info(f"[MainUI] Using token from {token_source}: {token[:20]}...")
-        
+        # Use the auth dependency to handle authentication
+        # This will automatically handle token validation, refresh, etc.
         try:
-            # Validate token and get user
-            logger.info("[MainUI] Decoding and validating token...")
-            payload = auth_handler.decode_token(token)
-            logger.info(f"[MainUI] Token payload: {payload}")
-            
-            user_id = payload.get("sub")
-            if not user_id:
-                logger.warning("[MainUI] Invalid token format - no 'sub' field, redirecting to login")
+            current_user = await auth_handler.get_current_user(request, next(get_db()))
+            logger.info(f"[MainUI] User {current_user.username} authenticated successfully, serving main UI")
+            return templates.TemplateResponse("index.html", {
+                "request": request,
+                "user": current_user
+            })
+        except HTTPException as auth_exc:
+            if auth_exc.status_code == 401:
+                logger.info("[MainUI] Authentication failed, redirecting to login")
                 return RedirectResponse(url="/login", status_code=303)
-            
-            logger.info(f"[MainUI] Token valid, user ID: {user_id}")
-            
-            # Get database session and user
-            logger.info("[MainUI] Getting database session and looking up user...")
-            db = next(get_db())
-            user = db.query(User).filter(User.id == user_id).first()
-            
-            if not user:
-                logger.warning(f"[MainUI] User with ID {user_id} not found in database, redirecting to login")
-                return RedirectResponse(url="/login", status_code=303)
-            
-            logger.info(f"[MainUI] User found: {user.username} (ID: {user.id}, Active: {user.is_active})")
-            
-            if not user.is_active:
-                logger.warning(f"[MainUI] User {user.username} account is disabled")
-                return templates.TemplateResponse(
-                    "login.html",
-                    {
-                        "request": request,
-                        "error_message": "Your account has been disabled. Please contact an administrator."
-                    }
-                )
-            
-            if user.is_expired():
-                logger.warning(f"[MainUI] User {user.username} account is expired")
-                return templates.TemplateResponse(
-                    "login.html",
-                    {
-                        "request": request,
-                        "error_message": "Your account has expired. Please contact an administrator to renew."
-                    }
-                )
-            
-            # Check if this is a valid session token
-            logger.info(f"[MainUI] Checking for valid session with token...")
-            session = (
-                db.query(UserSession)
-                .filter(
-                    UserSession.user_id == user_id,
-                    UserSession.session_token == token,
-                    UserSession.is_active == True
-                )
-                .first()
-            )
-            
-            if session:
-                logger.info(f"[MainUI] Session found: ID={session.id}, Expires={session.expires_at}, Expired={session.is_expired()}")
-                
-                if not session.is_expired():
-                    # Valid session found, update last used time
-                    logger.info(f"[MainUI] Session is valid, updating last used time")
-                    session.last_used = datetime.now(timezone.utc)
-                    session.ip_address = request.client.host
-                    session.user_agent = request.headers.get("user-agent")
-                    db.commit()
-                    
-                    # User is authenticated, serve the main UI
-                    logger.info(f"[MainUI] User {user.username} authenticated successfully, serving main UI")
-                    return templates.TemplateResponse("index.html", {
-                        "request": request,
-                        "user": user
-                    })
-                else:
-                    logger.warning(f"[MainUI] Session {session.id} is expired, redirecting to login")
-                    return RedirectResponse(url="/login", status_code=303)
             else:
-                # Session not found
-                logger.warning(f"[MainUI] No session found for user {user.username} with token {token[:20]}..., redirecting to login")
-                return RedirectResponse(url="/login", status_code=303)
-            
-        except Exception as auth_error:
-            logger.error(f"[MainUI] Authentication validation failed: {auth_error}", exc_info=True)
-            return RedirectResponse(url="/login", status_code=303)
+                raise auth_exc
             
     except Exception as e_render:
         logger.error(f"[MainUI] Error rendering main UI page: {e_render}", exc_info=True)
