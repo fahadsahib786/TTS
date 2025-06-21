@@ -34,6 +34,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Internal imports
 from config import (
@@ -144,6 +147,9 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("Server shutdown initiated")
 
+# Rate limiter configuration
+limiter = Limiter(key_func=get_remote_address)
+
 # FastAPI Application
 app = FastAPI(
     title="VoiceAI TTS Server",
@@ -151,6 +157,10 @@ app = FastAPI(
     version="2.0.2",
     lifespan=lifespan,
 )
+
+# Add rate limiter to app
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @app.middleware("http")
@@ -172,6 +182,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 # Exception handler for authentication redirects
 @app.exception_handler(FastAPIHTTPException)

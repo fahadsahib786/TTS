@@ -8,13 +8,16 @@ from sqlalchemy import func
 from typing import List, Optional
 from datetime import datetime, timedelta
 from pydantic import BaseModel, EmailStr
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 import json
 
-from database import User, UsageLog, UserSession, get_db
+from database import User, UsageLog, UserSession, LoginAttempt, get_db
 from auth import auth_handler, create_user_session, refresh_access_token, logout_user
 
 router = APIRouter()
 security = HTTPBearer()
+limiter = Limiter(key_func=get_remote_address)
 
 # --- Pydantic Models ---
 class UserLogin(BaseModel):
@@ -27,6 +30,8 @@ class UserCreate(BaseModel):
     password: str
     full_name: Optional[str] = None
     monthly_char_limit: int = 10000
+    daily_char_limit: int = 1000
+    per_request_char_limit: int = 500
     is_admin: bool = False
     expires_at: Optional[datetime] = None
 
@@ -36,6 +41,8 @@ class UserUpdate(BaseModel):
     password: Optional[str] = None
     full_name: Optional[str] = None
     monthly_char_limit: Optional[int] = None
+    daily_char_limit: Optional[int] = None
+    per_request_char_limit: Optional[int] = None
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
     expires_at: Optional[datetime] = None
@@ -48,7 +55,10 @@ class UserResponse(BaseModel):
     is_active: bool
     is_admin: bool
     monthly_char_limit: int
+    daily_char_limit: int
+    per_request_char_limit: int
     chars_used_current_month: int
+    chars_used_today: int
     expires_at: Optional[datetime]
     created_at: datetime
 
@@ -63,28 +73,64 @@ class UsageLogResponse(BaseModel):
 
 # --- Authentication Routes ---
 @router.post("/auth/login")
+@limiter.limit("5/minute")
 async def login(
     user_data: UserLogin,
-    request: Request,
+    request: Request = None,
+    response: Response = None,
     db: Session = Depends(get_db)
 ):
-    """Login user and create session"""
+    """Login user and create session with brute force protection"""
+    ip_address = request.client.host
+    user_agent = request.headers.get("user-agent")
+
+    # Check for IP-based blocking
+    if LoginAttempt.is_ip_blocked(ip_address, db):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts. Please try again later."
+        )
+
+    # Check for email-based blocking
+    if LoginAttempt.is_email_blocked(user_data.email, db):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed attempts for this email. Please try again later."
+        )
+
+    # Create login attempt record
+    login_attempt = LoginAttempt(
+        email=user_data.email,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        success=False
+    )
+    db.add(login_attempt)
+    
     user = db.query(User).filter(User.email == user_data.email).first()
     
     if not user or not user.check_password(user_data.password):
+        db.commit()  # Save the failed attempt
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
     if not user.is_active:
+        db.commit()  # Save the failed attempt
         raise HTTPException(status_code=403, detail="Account is disabled")
     
     if user.is_expired():
+        db.commit()  # Save the failed attempt
         raise HTTPException(status_code=403, detail="Account has expired")
     
-    return await create_user_session(user, db, request)
+    # Update login attempt as successful
+    login_attempt.success = True
+    db.commit()
+    
+    return await create_user_session(user, db, request, response)
 
 @router.post("/auth/refresh")
+@limiter.limit("10/minute")
 async def refresh_token(
-    request: Request,
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     """Refresh access token using refresh token"""
@@ -96,6 +142,7 @@ async def refresh_token(
 
 @router.post("/auth/logout")
 async def logout(
+    response: Response,
     all_sessions: bool = False,
     current_user: User = Depends(auth_handler.get_current_user),
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -104,6 +151,11 @@ async def logout(
     """Logout user and invalidate session(s)"""
     current_token = credentials.credentials if credentials else None
     await logout_user(current_user, db, current_token, all_sessions)
+    
+    # Clear secure cookies
+    response.delete_cookie(key="access_token", httponly=True, secure=True, samesite="strict")
+    response.delete_cookie(key="refresh_token", httponly=True, secure=True, samesite="strict")
+    
     return {"message": "Successfully logged out"}
 
 # --- User Management Routes (Admin Only) ---
@@ -114,6 +166,11 @@ async def create_user(
     db: Session = Depends(get_db)
 ):
     """Create new user (admin only)"""
+    # Validate password complexity
+    is_valid, message = User.validate_password_complexity(user_data.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=message)
+    
     # Check if email or username already exists
     if db.query(User).filter(User.email == user_data.email).first():
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -129,6 +186,8 @@ async def create_user(
         full_name=user_data.full_name,
         is_admin=user_data.is_admin,
         monthly_char_limit=user_data.monthly_char_limit,
+        daily_char_limit=user_data.daily_char_limit,
+        per_request_char_limit=user_data.per_request_char_limit,
         expires_at=user_data.expires_at
     )
     
@@ -187,13 +246,26 @@ async def update_user(
         user.username = user_data.username
     
     if user_data.password is not None:
+        # Validate password complexity
+        is_valid, message = User.validate_password_complexity(user_data.password)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=message)
         user.hashed_password = User.hash_password(user_data.password)
+        
+        # Invalidate all user sessions when password is changed
+        db.query(UserSession).filter(UserSession.user_id == user.id).update({"is_active": False})
     
     if user_data.full_name is not None:
         user.full_name = user_data.full_name
     
     if user_data.monthly_char_limit is not None:
         user.monthly_char_limit = user_data.monthly_char_limit
+    
+    if user_data.daily_char_limit is not None:
+        user.daily_char_limit = user_data.daily_char_limit
+    
+    if user_data.per_request_char_limit is not None:
+        user.per_request_char_limit = user_data.per_request_char_limit
     
     if user_data.is_active is not None:
         user.is_active = user_data.is_active

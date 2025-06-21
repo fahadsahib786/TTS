@@ -67,11 +67,25 @@
                                     Enter the text you want to convert to speech. For audiobooks, you can paste long
                                     chapters.
                                 </p>
-                                <div class="relative">
-                                    <textarea name="text" id="text" rows="8" class="textarea-base"
-                                        placeholder="Enter text here..." required></textarea>
-                                    <div class="absolute bottom-2.5 right-3 text-xs text-slate-500 dark:text-slate-400">
-                                        <span id="char-count">0</span> Characters
+                            <div class="relative">
+                                <textarea name="text" id="text" rows="8" class="textarea-base"
+                                    placeholder="Enter text here..." required></textarea>
+                                <div class="absolute bottom-2.5 right-3 text-xs text-slate-500 dark:text-slate-400">
+                                    <span id="char-count">0</span> Characters
+                                </div>
+                            </div>
+                            <div id="usage-stats" class="mt-2 text-xs text-slate-500 dark:text-slate-400">
+                                <div class="flex justify-between items-center">
+                                    <span>Monthly Usage: <span id="monthly-usage">0</span> / <span id="monthly-limit">0</span> characters</span>
+                                    <span>Daily Usage: <span id="daily-usage">0</span> / <span id="daily-limit">0</span> characters</span>
+                                    <span>Per Request Limit: <span id="request-limit">0</span> characters</span>
+                                </div>
+                                <div class="mt-1 flex space-x-2">
+                                    <div class="flex-grow bg-slate-200 dark:bg-slate-700 rounded-full h-1.5">
+                                        <div id="monthly-progress" class="bg-indigo-600 h-1.5 rounded-full" style="width: 0%"></div>
+                                    </div>
+                                    <div class="flex-grow bg-slate-200 dark:bg-slate-700 rounded-full h-1.5">
+                                        <div id="daily-progress" class="bg-indigo-600 h-1.5 rounded-full" style="width: 0%"></div>
                                     </div>
                                 </div>
                             </div>

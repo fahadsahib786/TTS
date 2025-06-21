@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import hashlib
 import secrets
 import os
+import bcrypt
 
 Base = declarative_base()
 
@@ -22,9 +23,13 @@ class User(Base):
     full_name = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     is_admin = Column(Boolean, default=False)
-    monthly_char_limit = Column(Integer, default=10000)  # Default 10k characters
+    monthly_char_limit = Column(Integer, default=10000)  # Default 10k characters per month
+    daily_char_limit = Column(Integer, default=1000)    # Default 1k characters per day
+    per_request_char_limit = Column(Integer, default=500)  # Default 500 characters per request
     chars_used_current_month = Column(Integer, default=0)
+    chars_used_today = Column(Integer, default=0)
     last_reset_date = Column(DateTime, default=func.now())
+    last_daily_reset = Column(DateTime, default=func.now())
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     expires_at = Column(DateTime, nullable=True)  # Account expiry date
@@ -35,12 +40,37 @@ class User(Base):
     
     def check_password(self, password: str) -> bool:
         """Check if provided password matches the hashed password"""
-        return self.hashed_password == self.hash_password(password)
+        try:
+            return bcrypt.checkpw(password.encode(), self.hashed_password.encode())
+        except Exception:
+            return False
+    
+    @staticmethod
+    def validate_password_complexity(password: str) -> tuple[bool, str]:
+        """Validate password complexity requirements"""
+        if len(password) < 8:
+            return False, "Password must be at least 8 characters long"
+        
+        if not any(c.isupper() for c in password):
+            return False, "Password must contain at least one uppercase letter"
+        
+        if not any(c.islower() for c in password):
+            return False, "Password must contain at least one lowercase letter"
+        
+        if not any(c.isdigit() for c in password):
+            return False, "Password must contain at least one number"
+        
+        special_chars = "!@#$%^&*()_+-=[]{}|;:,.<>?"
+        if not any(c in special_chars for c in password):
+            return False, "Password must contain at least one special character"
+        
+        return True, "Password meets complexity requirements"
     
     @staticmethod
     def hash_password(password: str) -> str:
-        """Hash password using SHA-256"""
-        return hashlib.sha256(password.encode()).hexdigest()
+        """Hash password using bcrypt"""
+        salt = bcrypt.gensalt()
+        return bcrypt.hashpw(password.encode(), salt).decode()
     
     def reset_monthly_usage(self):
         """Reset monthly usage if a new month has started"""
@@ -49,21 +79,45 @@ class User(Base):
             self.chars_used_current_month = 0
             self.last_reset_date = now
     
-    def can_use_characters(self, char_count: int) -> bool:
+    def reset_daily_usage(self):
+        """Reset daily usage if a new day has started"""
+        now = datetime.utcnow()
+        if self.last_daily_reset.date() != now.date():
+            self.chars_used_today = 0
+            self.last_daily_reset = now
+    
+    def can_use_characters(self, char_count: int) -> tuple[bool, str]:
         """Check if user can use the specified number of characters"""
         if self.is_admin:
-            return True
+            return True, "Admin user - unlimited access"
         
+        # Check per-request limit
+        if char_count > self.per_request_char_limit:
+            return False, f"Request exceeds per-request limit of {self.per_request_char_limit} characters"
+        
+        # Reset counters if needed
         self.reset_monthly_usage()
-        return (self.chars_used_current_month + char_count) <= self.monthly_char_limit
+        self.reset_daily_usage()
+        
+        # Check monthly limit
+        if (self.chars_used_current_month + char_count) > self.monthly_char_limit:
+            return False, f"Monthly character limit of {self.monthly_char_limit} exceeded"
+        
+        # Check daily limit
+        if (self.chars_used_today + char_count) > self.daily_char_limit:
+            return False, f"Daily character limit of {self.daily_char_limit} exceeded"
+        
+        return True, "Character usage allowed"
     
     def use_characters(self, char_count: int) -> bool:
         """Use characters from user's quota"""
         if self.is_admin:
             return True
             
-        if self.can_use_characters(char_count):
+        can_use, _ = self.can_use_characters(char_count)
+        if can_use:
             self.chars_used_current_month += char_count
+            self.chars_used_today += char_count
             return True
         return False
     
@@ -133,6 +187,40 @@ class GenerationQueue(Base):
     completed_at = Column(DateTime, nullable=True)
     priority = Column(Integer, default=0)  # Higher number = higher priority
 
+class LoginAttempt(Base):
+    __tablename__ = "login_attempts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    ip_address = Column(String(45), nullable=False)
+    user_agent = Column(String(500), nullable=True)
+    success = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=func.now())
+    
+    @staticmethod
+    def is_ip_blocked(ip_address: str, db_session) -> bool:
+        """Check if IP is blocked due to too many failed attempts"""
+        # Block if more than 5 failed attempts in last 15 minutes
+        cutoff_time = datetime.utcnow() - timedelta(minutes=15)
+        failed_attempts = db_session.query(LoginAttempt).filter(
+            LoginAttempt.ip_address == ip_address,
+            LoginAttempt.success == False,
+            LoginAttempt.created_at >= cutoff_time
+        ).count()
+        return failed_attempts >= 5
+    
+    @staticmethod
+    def is_email_blocked(email: str, db_session) -> bool:
+        """Check if email is blocked due to too many failed attempts"""
+        # Block if more than 10 failed attempts in last 30 minutes
+        cutoff_time = datetime.utcnow() - timedelta(minutes=30)
+        failed_attempts = db_session.query(LoginAttempt).filter(
+            LoginAttempt.email == email,
+            LoginAttempt.success == False,
+            LoginAttempt.created_at >= cutoff_time
+        ).count()
+        return failed_attempts >= 10
+
 # Database configuration
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./voiceai.db")
 
@@ -158,56 +246,9 @@ def get_db():
         db.close()
 
 def init_database():
-    """Initialize database with default data"""
+    """Initialize database tables only"""
     create_tables()
-    
-    # Create default admin user if not exists
-    db = SessionLocal()
-    try:
-        admin_user = db.query(User).filter(User.email == "admin@voiceai.com").first()
-        if not admin_user:
-            admin_user = User(
-                email="admin@voiceai.com",
-                username="admin",
-                hashed_password=User.hash_password("admin123"),
-                full_name="VoiceAI Administrator",
-                is_admin=True,
-                is_active=True,
-                monthly_char_limit=0,  # Unlimited for admin
-                expires_at=None  # Never expires
-            )
-            db.add(admin_user)
-            
-            # Create 20 test users
-            test_users = []
-            
-            # Create 20 test users (10 premium, 10 trial)
-            for i in range(1, 21):
-                is_premium = i <= 10
-                user = User(
-                    email=f"{'premium' if is_premium else 'trial'}{i if is_premium else i-10}@voiceai.com",
-                    username=f"{'premium' if is_premium else 'trial'}{i if is_premium else i-10}",
-                    hashed_password=User.hash_password("password123"),
-                    full_name=f"{'Premium' if is_premium else 'Trial'} User {i if is_premium else i-10}",
-                    is_admin=False,
-                    is_active=True,
-                    monthly_char_limit=20000000 if is_premium else 10000,  # 20M for premium, 10k for trial
-                    expires_at=datetime.utcnow() + timedelta(days=30)  # 30 days expiry for all users
-                )
-                test_users.append(user)
-            
-            db.add_all(test_users)
-            db.commit()
-            print("Database initialized with default users")
-            print("Admin: admin@voiceai.com / admin123 (never expires)")
-            print("Premium users: premium1@voiceai.com to premium10@voiceai.com / password123 (20M chars, 30 days expiry)")
-            print("Trial users: trial1@voiceai.com to trial10@voiceai.com / password123 (10k chars, 30 days expiry)")
-        
-    except Exception as e:
-        print(f"Error initializing database: {e}")
-        db.rollback()
-    finally:
-        db.close()
+    print("Database tables created successfully")
 
 if __name__ == "__main__":
     init_database()

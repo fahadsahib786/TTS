@@ -345,8 +345,11 @@
                             <th>Username</th>
                             <th>Email</th>
                             <th>Status</th>
-                            <th>Character Limit</th>
-                            <th>Usage</th>
+                            <th>Monthly Limit</th>
+                            <th>Daily Limit</th>
+                            <th>Per Request</th>
+                            <th>Monthly Usage</th>
+                            <th>Daily Usage</th>
                             <th>Expires</th>
                             <th>Actions</th>
                         </tr>
@@ -410,8 +413,16 @@
                     <input type="password" id="password" name="password" class="form-input">
                 </div>
                 <div class="form-row">
-                    <label class="form-label" for="char-limit">Monthly Character Limit</label>
-                    <input type="number" id="char-limit" name="monthly_char_limit" class="form-input" required>
+                    <label class="form-label" for="monthly-char-limit">Monthly Character Limit</label>
+                    <input type="number" id="monthly-char-limit" name="monthly_char_limit" class="form-input" required>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="daily-char-limit">Daily Character Limit</label>
+                    <input type="number" id="daily-char-limit" name="daily_char_limit" class="form-input" required>
+                </div>
+                <div class="form-row">
+                    <label class="form-label" for="per-request-char-limit">Per Request Character Limit</label>
+                    <input type="number" id="per-request-char-limit" name="per_request_char_limit" class="form-input" required>
                 </div>
                 <div class="form-row">
                     <label class="form-label" for="expires-at">Expires At</label>
@@ -513,7 +524,10 @@
                             </span>
                         </td>
                         <td>${user.monthly_char_limit.toLocaleString()}</td>
+                        <td>${user.daily_char_limit.toLocaleString()}</td>
+                        <td>${user.per_request_char_limit.toLocaleString()}</td>
                         <td>${user.chars_used_current_month.toLocaleString()}</td>
+                        <td>${user.chars_used_today.toLocaleString()}</td>
                         <td>${user.expires_at ? new Date(user.expires_at).toLocaleDateString() : 'Never'}</td>
                         <td>
                             <div class="btn-group">
@@ -552,7 +566,9 @@
                 const user = await apiRequest(`/users/${userId}`);
                 document.getElementById('username').value = user.username;
                 document.getElementById('email').value = user.email;
-                document.getElementById('char-limit').value = user.monthly_char_limit;
+                document.getElementById('monthly-char-limit').value = user.monthly_char_limit;
+                document.getElementById('daily-char-limit').value = user.daily_char_limit;
+                document.getElementById('per-request-char-limit').value = user.per_request_char_limit;
                 document.getElementById('is-admin').checked = user.is_admin;
                 if (user.expires_at) {
                     document.getElementById('expires-at').value = user.expires_at.split('T')[0];

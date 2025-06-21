@@ -11,7 +11,13 @@ from database import User, UserSession, get_db
 import os
 
 # Configuration
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "yourlkfsalkhioajal8867rasecure")
+SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+if not SECRET_KEY:
+    import secrets
+    SECRET_KEY = secrets.token_urlsafe(32)
+    print("WARNING: JWT_SECRET_KEY not set in environment. Using generated key for this session.")
+    print(f"For production, set JWT_SECRET_KEY environment variable to: {SECRET_KEY}")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 300
 REFRESH_TOKEN_EXPIRE_DAYS = 30
@@ -129,7 +135,8 @@ auth_handler = AuthHandler()
 async def create_user_session(
     user: User,
     db: Session,
-    request: Request = None
+    request: Request = None,
+    response = None
 ) -> Dict[str, Any]:
     """Create new user session with tokens"""
     # Create tokens
@@ -151,6 +158,25 @@ async def create_user_session(
     db.add(session)
     db.commit()
     
+    # Set secure cookies if response object is provided
+    if response:
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            httponly=True,
+            secure=True,  # Only send over HTTPS
+            samesite="strict"
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            max_age=REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+            httponly=True,
+            secure=True,
+            samesite="strict"
+        )
+    
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -162,7 +188,10 @@ async def create_user_session(
             "username": user.username,
             "is_admin": user.is_admin,
             "monthly_char_limit": user.monthly_char_limit,
-            "chars_used_current_month": user.chars_used_current_month
+            "daily_char_limit": user.daily_char_limit,
+            "per_request_char_limit": user.per_request_char_limit,
+            "chars_used_current_month": user.chars_used_current_month,
+            "chars_used_today": user.chars_used_today
         }
     }
 

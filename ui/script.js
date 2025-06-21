@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     const API_BASE_URL = IS_LOCAL_FILE ? 'http://localhost:8004' : '';
 
     const DEBOUNCE_DELAY_MS = 750;
-    const MAX_CHARACTERS_PER_REQUEST = 50000; // 50k character limit
+    const MAX_CHARACTERS_PER_REQUEST = 30000; // 30k character limit
 
     // --- Authentication Functions ---
     async function checkAuth() {
@@ -84,6 +84,9 @@ document.addEventListener('DOMContentLoaded', async function () {
             header.appendChild(userInfoDiv);
         }
 
+        // Update usage stats in the main UI
+        updateUsageStats();
+
         // Add logout handler
         const logoutBtn = document.getElementById('logout-btn');
         if (logoutBtn) {
@@ -109,6 +112,49 @@ document.addEventListener('DOMContentLoaded', async function () {
                     window.location.href = '/login';
                 }
             });
+        }
+    }
+
+    function updateUsageStats() {
+        if (!currentUser) return;
+
+        const monthlyUsage = document.getElementById('monthly-usage');
+        const monthlyLimit = document.getElementById('monthly-limit');
+        const dailyUsage = document.getElementById('daily-usage');
+        const dailyLimit = document.getElementById('daily-limit');
+        const requestLimit = document.getElementById('request-limit');
+        const monthlyProgress = document.getElementById('monthly-progress');
+        const dailyProgress = document.getElementById('daily-progress');
+
+        if (monthlyUsage) monthlyUsage.textContent = formatNumber(currentUser.chars_used_current_month);
+        if (monthlyLimit) monthlyLimit.textContent = formatNumber(currentUser.monthly_char_limit);
+        if (dailyUsage) dailyUsage.textContent = formatNumber(currentUser.chars_used_today);
+        if (dailyLimit) dailyLimit.textContent = formatNumber(currentUser.daily_char_limit);
+        if (requestLimit) requestLimit.textContent = formatNumber(currentUser.per_request_char_limit);
+
+        // Update progress bars
+        if (monthlyProgress && currentUser.monthly_char_limit > 0) {
+            const monthlyPercent = Math.min((currentUser.chars_used_current_month / currentUser.monthly_char_limit) * 100, 100);
+            monthlyProgress.style.width = `${monthlyPercent}%`;
+            if (monthlyPercent > 90) {
+                monthlyProgress.className = 'bg-red-600 h-1.5 rounded-full';
+            } else if (monthlyPercent > 75) {
+                monthlyProgress.className = 'bg-yellow-600 h-1.5 rounded-full';
+            } else {
+                monthlyProgress.className = 'bg-indigo-600 h-1.5 rounded-full';
+            }
+        }
+
+        if (dailyProgress && currentUser.daily_char_limit > 0) {
+            const dailyPercent = Math.min((currentUser.chars_used_today / currentUser.daily_char_limit) * 100, 100);
+            dailyProgress.style.width = `${dailyPercent}%`;
+            if (dailyPercent > 90) {
+                dailyProgress.className = 'bg-red-600 h-1.5 rounded-full';
+            } else if (dailyPercent > 75) {
+                dailyProgress.className = 'bg-yellow-600 h-1.5 rounded-full';
+            } else {
+                dailyProgress.className = 'bg-indigo-600 h-1.5 rounded-full';
+            }
         }
     }
 
@@ -823,13 +869,47 @@ document.addEventListener('DOMContentLoaded', async function () {
         const startTime = performance.now();
         const jsonData = getTTSFormData();
 
-        // Check character limit
+        // Check all character limits
         const textLength = jsonData.text.length;
-        if (currentUser && textLength > currentUser.monthly_char_limit - currentUser.chars_used_current_month) {
+        
+        if (currentUser) {
+            // Check if user is not admin (admins have unlimited usage)
+            if (!currentUser.is_admin) {
+                // Check per-request limit first
+                if (textLength > currentUser.per_request_char_limit) {
+                    hideLoadingOverlay();
+                    hideTextInputLoader();
+                    isGenerating = false;
+                    showNotification(`Text exceeds per-request limit of ${formatNumber(currentUser.per_request_char_limit)} characters`, "error");
+                    return;
+                }
+
+                // Check monthly limit
+                const monthlyRemaining = currentUser.monthly_char_limit - currentUser.chars_used_current_month;
+                if (textLength > monthlyRemaining) {
+                    hideLoadingOverlay();
+                    hideTextInputLoader();
+                    isGenerating = false;
+                    showNotification(`Monthly character limit exceeded. ${formatNumber(monthlyRemaining)} characters remaining.`, "error");
+                    return;
+                }
+
+                // Check daily limit
+                const dailyRemaining = currentUser.daily_char_limit - currentUser.chars_used_today;
+                if (textLength > dailyRemaining) {
+                    hideLoadingOverlay();
+                    hideTextInputLoader();
+                    isGenerating = false;
+                    showNotification(`Daily character limit exceeded. ${formatNumber(dailyRemaining)} characters remaining.`, "error");
+                    return;
+                }
+            }
+        } else {
             hideLoadingOverlay();
             hideTextInputLoader();
             isGenerating = false;
-            showNotification("Monthly character limit exceeded", "error");
+            showNotification("Please log in to use the TTS service", "error");
+            window.location.href = '/login';
             return;
         }
 
@@ -862,6 +942,14 @@ document.addEventListener('DOMContentLoaded', async function () {
             
             // Initialize WaveSurfer and wait for it to be ready
             await initializeWaveSurferAsync(resultDetails.outputUrl, resultDetails);
+            
+            // Update user info to reflect new usage
+            if (currentUser) {
+                currentUser.chars_used_current_month += textLength;
+                currentUser.chars_used_today += textLength;
+                updateUserInfo();
+            }
+            
             showNotification('Audio generated successfully!', 'success');
         } catch (error) {
             console.error('TTS Generation Error:', error);
