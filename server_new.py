@@ -394,9 +394,18 @@ async def get_login_page(request: Request):
     return templates.TemplateResponse("login.html", {"request": request})
 
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
-async def get_admin_page(current_user: User = Depends(auth_handler.get_current_admin_user)):
+async def get_admin_page(request: Request):
     """Serves the admin page (admin users only)."""
-    return templates.TemplateResponse("admin.html", {"request": {}})
+    try:
+        current_user = await auth_handler.get_current_admin_user(request, next(get_db()))
+        return templates.TemplateResponse("admin.html", {"request": request, "user": current_user})
+    except HTTPException as auth_exc:
+        if auth_exc.status_code == 401:
+            return RedirectResponse(url="/login", status_code=303)
+        elif auth_exc.status_code == 403:
+            raise HTTPException(status_code=403, detail="Admin access required")
+        else:
+            raise auth_exc
 
 # TTS Generation endpoint with user validation, concurrency control, usage tracking, and performance monitoring
 @app.post(
@@ -431,13 +440,14 @@ async def get_admin_page(current_user: User = Depends(auth_handler.get_current_a
     },
 )
 async def tts_endpoint(
-    request: CustomTTSRequest,
+    request_data: CustomTTSRequest,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(auth_handler.get_current_user),
+    http_request: Request,
     db: Session = Depends(get_db),
 ):
     """Generate speech with user validation, concurrency control, usage tracking, and performance monitoring"""
-    text_length = len(request.text)
+    current_user = await auth_handler.get_current_user(http_request, db)
+    text_length = len(request_data.text)
     if not current_user.can_use_characters(text_length):
         raise HTTPException(
             status_code=403,
@@ -459,8 +469,8 @@ async def tts_endpoint(
     job = GenerationQueue(
         user_id=current_user.id,
         status="pending",
-        text_content=request.text[:5000],  # Limit stored text length for queue
-        parameters=request.json(),
+        text_content=request_data.text[:5000],  # Limit stored text length for queue
+        parameters=request_data.json(),
         created_at=time.time()
     )
     db.add(job)
@@ -486,37 +496,37 @@ async def tts_endpoint(
             )
 
         audio_prompt_path_for_engine: Optional[Path] = None
-        if request.voice_mode == "predefined":
-            if not request.predefined_voice_id:
+        if request_data.voice_mode == "predefined":
+            if not request_data.predefined_voice_id:
                 raise HTTPException(
                     status_code=400,
-                    detail="Missing 'predefined_voice_id' for 'predefined' voice mode.",
-                )
+                detail="Missing 'predefined_voice_id' for 'predefined' voice mode.",
+            )
             voices_dir = get_predefined_voices_path(ensure_absolute=True)
-            potential_path = voices_dir / request.predefined_voice_id
+            potential_path = voices_dir / request_data.predefined_voice_id
             if not potential_path.is_file():
                 logger.error(f"Predefined voice file not found: {potential_path}")
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Predefined voice file '{request.predefined_voice_id}' not found.",
-                )
+                detail=f"Predefined voice file '{request_data.predefined_voice_id}' not found.",
+            )
             audio_prompt_path_for_engine = potential_path
-            logger.info(f"Using predefined voice: {request.predefined_voice_id}")
+            logger.info(f"Using predefined voice: {request_data.predefined_voice_id}")
 
-        elif request.voice_mode == "clone":
-            if not request.reference_audio_filename:
+        elif request_data.voice_mode == "clone":
+            if not request_data.reference_audio_filename:
                 raise HTTPException(
                     status_code=400,
-                    detail="Missing 'reference_audio_filename' for 'clone' voice mode.",
-                )
+                detail="Missing 'reference_audio_filename' for 'clone' voice mode.",
+            )
             ref_dir = get_reference_audio_path(ensure_absolute=True)
-            potential_path = ref_dir / request.reference_audio_filename
+            potential_path = ref_dir / request_data.reference_audio_filename
             if not potential_path.is_file():
                 logger.error(f"Reference audio file for cloning not found: {potential_path}")
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Reference audio file '{request.reference_audio_filename}' not found.",
-                )
+                detail=f"Reference audio file '{request_data.reference_audio_filename}' not found.",
+            )
             max_dur = config_manager.get_int("audio_output.max_reference_duration_sec", 30)
             is_valid, msg = utils.validate_reference_audio(potential_path, max_dur)
             if not is_valid:
@@ -524,7 +534,7 @@ async def tts_endpoint(
                     status_code=400, detail=f"Invalid reference audio: {msg}"
                 )
             audio_prompt_path_for_engine = potential_path
-            logger.info(f"Using reference audio for cloning: {request.reference_audio_filename}")
+            logger.info(f"Using reference audio for cloning: {request_data.reference_audio_filename}")
 
         perf_monitor.record("Parameters and voice path resolved")
 
@@ -532,13 +542,13 @@ async def tts_endpoint(
         final_output_sample_rate = get_audio_sample_rate()
         engine_output_sample_rate: Optional[int] = None
 
-        if request.split_text and len(request.text) > (request.chunk_size * 1.5 if request.chunk_size else 120 * 1.5):
-            chunk_size_to_use = request.chunk_size if request.chunk_size is not None else 120
+        if request_data.split_text and len(request_data.text) > (request_data.chunk_size * 1.5 if request_data.chunk_size else 120 * 1.5):
+            chunk_size_to_use = request_data.chunk_size if request_data.chunk_size is not None else 120
             logger.info(f"Splitting text into chunks of size ~{chunk_size_to_use}.")
-            text_chunks = utils.chunk_text_by_sentences(request.text, chunk_size_to_use)
+            text_chunks = utils.chunk_text_by_sentences(request_data.text, chunk_size_to_use)
             perf_monitor.record(f"Text split into {len(text_chunks)} chunks")
         else:
-            text_chunks = [request.text]
+            text_chunks = [request_data.text]
             logger.info("Processing text as a single chunk (splitting not enabled or text too short).")
 
         if not text_chunks:
@@ -552,10 +562,10 @@ async def tts_endpoint(
                 chunk_audio_tensor, chunk_sr_from_engine = engine.synthesize(
                     text=chunk,
                     audio_prompt_path=str(audio_prompt_path_for_engine) if audio_prompt_path_for_engine else None,
-                    temperature=request.temperature if request.temperature is not None else get_gen_default_temperature(),
-                    exaggeration=request.exaggeration if request.exaggeration is not None else get_gen_default_exaggeration(),
-                    cfg_weight=request.cfg_weight if request.cfg_weight is not None else get_gen_default_cfg_weight(),
-                    seed=request.seed if request.seed is not None else get_gen_default_seed(),
+                    temperature=request_data.temperature if request_data.temperature is not None else get_gen_default_temperature(),
+                    exaggeration=request_data.exaggeration if request_data.exaggeration is not None else get_gen_default_exaggeration(),
+                    cfg_weight=request_data.cfg_weight if request_data.cfg_weight is not None else get_gen_default_cfg_weight(),
+                    seed=request_data.seed if request_data.seed is not None else get_gen_default_seed(),
                 )
                 perf_monitor.record(f"Engine synthesized chunk {i+1}")
 
@@ -574,7 +584,7 @@ async def tts_endpoint(
 
                 current_processed_audio_tensor = chunk_audio_tensor
 
-                speed_factor_to_use = request.speed_factor if request.speed_factor is not None else get_gen_default_speed_factor()
+                speed_factor_to_use = request_data.speed_factor if request_data.speed_factor is not None else get_gen_default_speed_factor()
                 if speed_factor_to_use != 1.0:
                     current_processed_audio_tensor, _ = utils.apply_speed_factor(
                         current_processed_audio_tensor,
@@ -631,7 +641,7 @@ async def tts_endpoint(
                 logger.error(f"Segment {idx} shape: {seg.shape}, dtype: {seg.dtype}")
             raise HTTPException(status_code=500, detail=f"Audio concatenation error: {e_concat}")
 
-        output_format_str = request.output_format if request.output_format else get_audio_output_format()
+        output_format_str = request_data.output_format if request_data.output_format else get_audio_output_format()
 
         encoded_audio_bytes = utils.encode_audio(
             audio_array=final_audio_np,
@@ -664,9 +674,9 @@ async def tts_endpoint(
         usage_log = UsageLog(
             user_id=current_user.id,
             characters_used=text_length,
-            text_content=request.text[:500],  # Store first 500 chars
-            voice_mode=request.voice_mode,
-            voice_file=request.predefined_voice_id or request.reference_audio_filename,
+            text_content=request_data.text[:500],  # Store first 500 chars
+            voice_mode=request_data.voice_mode,
+            voice_file=request_data.predefined_voice_id or request_data.reference_audio_filename,
             generation_time=generation_time
         )
         db.add(usage_log)
@@ -689,9 +699,11 @@ async def tts_endpoint(
 # --- API Endpoint for Initial UI Data ---
 @app.get("/api/ui/initial-data", tags=["UI Helpers"])
 async def get_ui_initial_data(
-    current_user: User = Depends(auth_handler.get_current_user)
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """Provides all necessary initial data for the UI to render"""
+    current_user = await auth_handler.get_current_user(request, db)
     logger.info("Request received for /api/ui/initial-data.")
     try:
         full_config = get_full_config_for_template()
@@ -731,9 +743,11 @@ async def get_ui_initial_data(
 @app.post("/upload_reference", tags=["File Management"])
 async def upload_reference_audio_endpoint(
     files: List[UploadFile] = File(...),
-    current_user: User = Depends(auth_handler.get_current_user)
+    request: Request = None,
+    db: Session = Depends(get_db)
 ):
     """Handles uploading of reference audio files (.wav, .mp3) for voice cloning"""
+    current_user = await auth_handler.get_current_user(request, db)
     logger.info(f"Request to /upload_reference with {len(files)} file(s).")
     ref_path = get_reference_audio_path(ensure_absolute=True)
     uploaded_filenames_successfully: List[str] = []
@@ -793,9 +807,11 @@ async def upload_reference_audio_endpoint(
 @app.post("/upload_predefined_voice", tags=["File Management"])
 async def upload_predefined_voice_endpoint(
     files: List[UploadFile] = File(...),
-    current_user: User = Depends(auth_handler.get_current_admin_user)  # Only admin can upload predefined voices
+    request: Request = None,
+    db: Session = Depends(get_db)
 ):
     """Handles uploading of predefined voice files (.wav, .mp3)"""
+    current_user = await auth_handler.get_current_admin_user(request, db)  # Only admin can upload predefined voices
     logger.info(f"Request to /upload_predefined_voice with {len(files)} file(s).")
     predefined_voices_path = get_predefined_voices_path(ensure_absolute=True)
     uploaded_filenames_successfully: List[str] = []
@@ -855,9 +871,10 @@ async def upload_predefined_voice_endpoint(
 @app.post("/save_settings", response_model=UpdateStatusResponse, tags=["Configuration"])
 async def save_settings_endpoint(
     request: Request,
-    current_user: User = Depends(auth_handler.get_current_admin_user)  # Only admin can change settings
+    db: Session = Depends(get_db)
 ):
     """Saves partial configuration updates to the config.yaml file."""
+    current_user = await auth_handler.get_current_admin_user(request, db)  # Only admin can change settings
     logger.info("Request received for /save_settings.")
     try:
         partial_update = await request.json()
@@ -892,9 +909,11 @@ async def save_settings_endpoint(
 
 @app.post("/reset_settings", response_model=UpdateStatusResponse, tags=["Configuration"])
 async def reset_settings_endpoint(
-    current_user: User = Depends(auth_handler.get_current_admin_user)  # Only admin can reset settings
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """Resets the configuration in config.yaml back to hardcoded defaults."""
+    current_user = await auth_handler.get_current_admin_user(request, db)  # Only admin can reset settings
     logger.warning("Request received to reset all configurations to default values.")
     try:
         if config_manager.reset_and_save():
@@ -917,9 +936,11 @@ async def reset_settings_endpoint(
 
 @app.post("/restart_server", response_model=UpdateStatusResponse, tags=["Configuration"])
 async def restart_server_endpoint(
-    current_user: User = Depends(auth_handler.get_current_admin_user)  # Only admin can restart server
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """Attempts to trigger a server restart."""
+    current_user = await auth_handler.get_current_admin_user(request, db)  # Only admin can restart server
     logger.info("Request received for /restart_server.")
     message = (
         "Server restart initiated. If running locally without a process manager, "
@@ -932,12 +953,14 @@ async def restart_server_endpoint(
 # --- OpenAI Compatible Endpoint ---
 @app.post("/v1/audio/speech", tags=["OpenAI Compatible"])
 async def openai_speech_endpoint(
-    request: OpenAISpeechRequest,
-    current_user: User = Depends(auth_handler.get_current_user)
+    request_data: OpenAISpeechRequest,
+    http_request: Request,
+    db: Session = Depends(get_db)
 ):
     """OpenAI-compatible speech generation endpoint."""
+    current_user = await auth_handler.get_current_user(http_request, db)
     # Check character limit
-    text_length = len(request.input_)
+    text_length = len(request_data.input_)
     if not current_user.can_use_characters(text_length):
         raise HTTPException(
             status_code=403,
@@ -947,8 +970,8 @@ async def openai_speech_endpoint(
     # Determine the audio prompt path based on the voice parameter
     predefined_voices_path = get_predefined_voices_path(ensure_absolute=True)
     reference_audio_path = get_reference_audio_path(ensure_absolute=True)
-    voice_path_predefined = predefined_voices_path / request.voice
-    voice_path_reference = reference_audio_path / request.voice
+    voice_path_predefined = predefined_voices_path / request_data.voice
+    voice_path_reference = reference_audio_path / request_data.voice
 
     if voice_path_predefined.is_file():
         audio_prompt_path = voice_path_predefined
@@ -956,7 +979,7 @@ async def openai_speech_endpoint(
         audio_prompt_path = voice_path_reference
     else:
         raise HTTPException(
-            status_code=404, detail=f"Voice file '{request.voice}' not found."
+            status_code=404, detail=f"Voice file '{request_data.voice}' not found."
         )
 
     # Check if the TTS model is loaded
@@ -968,11 +991,11 @@ async def openai_speech_endpoint(
 
     try:
         # Use the provided seed or the default
-        seed_to_use = request.seed if request.seed is not None else get_gen_default_seed()
+        seed_to_use = request_data.seed if request_data.seed is not None else get_gen_default_seed()
 
         # Synthesize the audio
         audio_tensor, sr = engine.synthesize(
-            text=request.input_,
+            text=request_data.input_,
             audio_prompt_path=str(audio_prompt_path),
             temperature=get_gen_default_temperature(),
             exaggeration=get_gen_default_exaggeration(),
@@ -986,8 +1009,8 @@ async def openai_speech_endpoint(
             )
 
         # Apply speed factor if not 1.0
-        if request.speed != 1.0:
-            audio_tensor, _ = utils.apply_speed_factor(audio_tensor, sr, request.speed)
+        if request_data.speed != 1.0:
+            audio_tensor, _ = utils.apply_speed_factor(audio_tensor, sr, request_data.speed)
 
         # Convert tensor to numpy array
         audio_np = audio_tensor.cpu().numpy()
@@ -1000,7 +1023,7 @@ async def openai_speech_endpoint(
         encoded_audio = utils.encode_audio(
             audio_array=audio_np,
             sample_rate=sr,
-            output_format=request.response_format,
+            output_format=request_data.response_format,
             target_sample_rate=get_audio_sample_rate(),
         )
 
@@ -1012,12 +1035,11 @@ async def openai_speech_endpoint(
         usage_log = UsageLog(
             user_id=current_user.id,
             characters_used=text_length,
-            text_content=request.input_[:500],
+            text_content=request_data.input_[:500],
             voice_mode="openai",
-            voice_file=request.voice,
+            voice_file=request_data.voice,
             generation_time=generation_time
         )
-        db = next(get_db())
         db.add(usage_log)
         
         # Update user's character usage
@@ -1025,7 +1047,7 @@ async def openai_speech_endpoint(
         db.commit()
 
         # Determine the media type and return the streaming response
-        media_type = f"audio/{request.response_format}"
+        media_type = f"audio/{request_data.response_format}"
         return StreamingResponse(io.BytesIO(encoded_audio), media_type=media_type)
 
     except Exception as e:
@@ -1035,9 +1057,11 @@ async def openai_speech_endpoint(
 # --- UI Helper API Endpoints ---
 @app.get("/get_reference_files", response_model=List[str], tags=["UI Helpers"])
 async def get_reference_files_api(
-    current_user: User = Depends(auth_handler.get_current_user)
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """Returns a list of valid reference audio filenames"""
+    current_user = await auth_handler.get_current_user(request, db)
     logger.debug("Request for /get_reference_files.")
     try:
         return utils.get_valid_reference_files()
@@ -1047,9 +1071,11 @@ async def get_reference_files_api(
 
 @app.get("/get_predefined_voices", response_model=List[Dict[str, str]], tags=["UI Helpers"])
 async def get_predefined_voices_api(
-    current_user: User = Depends(auth_handler.get_current_user)
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """Returns a list of predefined voices with display names and filenames"""
+    current_user = await auth_handler.get_current_user(request, db)
     logger.debug("Request for /get_predefined_voices.")
     try:
         return utils.get_predefined_voices()
