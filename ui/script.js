@@ -52,7 +52,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         try {
             const response = await fetch(`${API_BASE_URL}/api/users/me`, {
                 headers: {
-                    'Authorization': `Bearer ${token}`
+                    'Authorization': `Bearer ${token}`,
+                    credentials: 'include'
                 }
             });
 
@@ -96,7 +97,8 @@ document.addEventListener('DOMContentLoaded', async function () {
                 headers: {
                     'X-Refresh-Token': refreshToken,
                     'Content-Type': 'application/json'
-                }
+                },
+                 credentials: 'include'
             });
 
             if (!response.ok) {
@@ -244,11 +246,12 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
 
         const authOptions = {
+              credentials: 'include',
             ...options,
             headers: {
                 'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
-                ...options.headers
+                ...options.headers,
             }
         };
 
