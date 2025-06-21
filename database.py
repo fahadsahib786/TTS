@@ -147,7 +147,14 @@ class User(Base):
         """Check if user account has expired"""
         if self.expires_at is None:
             return False
-        return datetime.now(timezone.utc) > self.expires_at
+        now = datetime.now(timezone.utc)
+        # Handle both timezone-aware and timezone-naive expires_at values
+        if self.expires_at.tzinfo is None:
+            # If expires_at is timezone-naive, assume it's UTC
+            expires_at_utc = self.expires_at.replace(tzinfo=timezone.utc)
+        else:
+            expires_at_utc = self.expires_at
+        return now > expires_at_utc
 
 class UsageLog(Base):
     __tablename__ = "usage_logs"
@@ -185,7 +192,14 @@ class UserSession(Base):
     
     def is_expired(self) -> bool:
         """Check if session has expired"""
-        return datetime.now(timezone.utc) > self.expires_at
+        now = datetime.now(timezone.utc)
+        # Handle both timezone-aware and timezone-naive expires_at values
+        if self.expires_at.tzinfo is None:
+            # If expires_at is timezone-naive, assume it's UTC
+            expires_at_utc = self.expires_at.replace(tzinfo=timezone.utc)
+        else:
+            expires_at_utc = self.expires_at
+        return now > expires_at_utc
     
     @staticmethod
     def generate_tokens():
